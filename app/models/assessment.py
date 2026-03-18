@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Enum, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -17,6 +17,7 @@ class AssessmentStatus(str, enum.Enum):
     review = "review"
     approved = "approved"
     archived = "archived"
+    failed = "failed"
 
 
 class CapitalReadiness(str, enum.Enum):
@@ -43,8 +44,10 @@ class Assessment(Base):
     overall_rating: Mapped[str | None] = mapped_column(String(50), nullable=True)
     enterprise_stage_classification: Mapped[str | None] = mapped_column(String(100), nullable=True)
     capital_readiness: Mapped[CapitalReadiness | None] = mapped_column(Enum(CapitalReadiness), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    progress_message: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     company: Mapped["Company"] = relationship(back_populates="assessments")
     module_scores: Mapped[list["ModuleScore"]] = relationship(back_populates="assessment", cascade="all, delete-orphan")
@@ -62,7 +65,7 @@ class ModuleScore(Base):
     total_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
     rating: Mapped[str | None] = mapped_column(String(50), nullable=True)
     weight: Mapped[Decimal] = mapped_column(Numeric(4, 3), nullable=False)
-    scored_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    scored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     assessment: Mapped["Assessment"] = relationship(back_populates="module_scores")
     dimension_scores: Mapped[list["DimensionScore"]] = relationship(
@@ -85,7 +88,7 @@ class DimensionScore(Base):
     calculation_detail: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     ai_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
     input_data_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     module_score: Mapped["ModuleScore"] = relationship(back_populates="dimension_scores")
 
@@ -104,8 +107,8 @@ class AutoFlag(Base):
     stage: Mapped[str | None] = mapped_column(String(10), nullable=True)
     is_resolved: Mapped[bool] = mapped_column(default=False)
     resolved_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    resolved_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     assessment: Mapped["Assessment"] = relationship(back_populates="auto_flags")
     company: Mapped["Company"] = relationship()

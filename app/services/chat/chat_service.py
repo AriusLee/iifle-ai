@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.chat import ChatConversation, ChatMessage, ContextType, MessageRole
-from app.services.ai.client import AnthropicClient, DEFAULT_MODEL
+from app.services.ai.provider import get_ai_client
 from app.services.chat.context_builder import build_chat_context
 from app.services.chat.tools import CHAT_TOOLS, execute_tool
 
@@ -57,7 +57,7 @@ class ChatService:
 
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
-        self._client = AnthropicClient()
+        self._client = get_ai_client()
 
     # ------------------------------------------------------------------
     # Conversation management
@@ -146,100 +146,87 @@ class ChatService:
         history = await self.get_conversation_history(conversation_id)
         messages = self._build_messages(history)
 
-        # 4. Stream with tool-use loop
+        # 4. Stream response — provider-agnostic
         full_response_text = ""
-        tool_calls_metadata: list[dict[str, Any]] = []
 
-        for iteration in range(MAX_TOOL_ITERATIONS):
-            # Stream the response
-            collected_text = ""
-            tool_use_blocks: list[dict[str, Any]] = []
-            current_tool_use: dict[str, Any] | None = None
-            current_tool_json = ""
+        from app.services.ai.groq_client import GroqClient
+        from app.services.ai.gemini_client import GeminiClient
 
-            async with self._client._client.messages.stream(
-                model=DEFAULT_MODEL,
-                system=system_prompt,
-                messages=messages,
-                tools=CHAT_TOOLS,
-                max_tokens=4096,
-                temperature=0.3,
-            ) as stream:
-                async for event in stream:
-                    # Handle different event types from the streaming API
-                    if event.type == "content_block_start":
-                        if event.content_block.type == "tool_use":
-                            current_tool_use = {
-                                "id": event.content_block.id,
-                                "name": event.content_block.name,
-                                "input": {},
-                            }
-                            current_tool_json = ""
-                        elif event.content_block.type == "text":
-                            pass  # text blocks start empty
+        if isinstance(self._client, (GroqClient, GeminiClient)):
+            # Groq/Gemini: simple streaming, no tool_use
+            async for chunk in self._client.stream_chat(system_prompt, messages):
+                full_response_text += chunk
+                yield chunk
+        else:
+            # Anthropic: streaming with tool_use loop
+            tool_calls_metadata: list[dict[str, Any]] = []
 
-                    elif event.type == "content_block_delta":
-                        if event.delta.type == "text_delta":
-                            collected_text += event.delta.text
-                            yield event.delta.text
-                        elif event.delta.type == "input_json_delta":
+            for iteration in range(MAX_TOOL_ITERATIONS):
+                collected_text = ""
+                tool_use_blocks: list[dict[str, Any]] = []
+                current_tool_use: dict[str, Any] | None = None
+                current_tool_json = ""
+
+                async with self._client._client.messages.stream(
+                    model="claude-haiku-4-5-20251001",
+                    system=system_prompt,
+                    messages=messages,
+                    tools=CHAT_TOOLS,
+                    max_tokens=4096,
+                    temperature=0.3,
+                ) as stream:
+                    async for event in stream:
+                        if event.type == "content_block_start":
+                            if event.content_block.type == "tool_use":
+                                current_tool_use = {
+                                    "id": event.content_block.id,
+                                    "name": event.content_block.name,
+                                    "input": {},
+                                }
+                                current_tool_json = ""
+                        elif event.type == "content_block_delta":
+                            if event.delta.type == "text_delta":
+                                collected_text += event.delta.text
+                                yield event.delta.text
+                            elif event.delta.type == "input_json_delta":
+                                if current_tool_use is not None:
+                                    current_tool_json += event.delta.partial_json
+                        elif event.type == "content_block_stop":
                             if current_tool_use is not None:
-                                current_tool_json += event.delta.partial_json
+                                try:
+                                    current_tool_use["input"] = json.loads(current_tool_json) if current_tool_json else {}
+                                except json.JSONDecodeError:
+                                    current_tool_use["input"] = {}
+                                tool_use_blocks.append(current_tool_use)
+                                current_tool_use = None
+                                current_tool_json = ""
 
-                    elif event.type == "content_block_stop":
-                        if current_tool_use is not None:
-                            # Parse accumulated JSON
-                            try:
-                                current_tool_use["input"] = json.loads(current_tool_json) if current_tool_json else {}
-                            except json.JSONDecodeError:
-                                current_tool_use["input"] = {}
-                            tool_use_blocks.append(current_tool_use)
-                            current_tool_use = None
-                            current_tool_json = ""
+                full_response_text += collected_text
 
-            full_response_text += collected_text
+                if not tool_use_blocks:
+                    break
 
-            # If no tool calls, we're done
-            if not tool_use_blocks:
-                break
+                assistant_content: list[dict[str, Any]] = []
+                if collected_text:
+                    assistant_content.append({"type": "text", "text": collected_text})
+                for tu in tool_use_blocks:
+                    assistant_content.append({
+                        "type": "tool_use",
+                        "id": tu["id"],
+                        "name": tu["name"],
+                        "input": tu["input"],
+                    })
+                messages.append({"role": "assistant", "content": assistant_content})
 
-            # Build the assistant message content (text + tool_use blocks)
-            assistant_content: list[dict[str, Any]] = []
-            if collected_text:
-                assistant_content.append({"type": "text", "text": collected_text})
-            for tu in tool_use_blocks:
-                assistant_content.append({
-                    "type": "tool_use",
-                    "id": tu["id"],
-                    "name": tu["name"],
-                    "input": tu["input"],
-                })
+                tool_results: list[dict[str, Any]] = []
+                for tu in tool_use_blocks:
+                    tool_calls_metadata.append({"tool": tu["name"], "input": tu["input"]})
+                    result_str = await execute_tool(tu["name"], tu["input"], self._db, company_id)
+                    tool_results.append({"type": "tool_result", "tool_use_id": tu["id"], "content": result_str})
+                    tool_calls_metadata[-1]["result_preview"] = result_str[:200]
 
-            messages.append({"role": "assistant", "content": assistant_content})
-
-            # Execute each tool and build tool results
-            tool_results: list[dict[str, Any]] = []
-            for tu in tool_use_blocks:
-                tool_calls_metadata.append({
-                    "tool": tu["name"],
-                    "input": tu["input"],
-                })
-
-                result_str = await execute_tool(
-                    tu["name"], tu["input"], self._db, company_id
-                )
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tu["id"],
-                    "content": result_str,
-                })
-
-                tool_calls_metadata[-1]["result_preview"] = result_str[:200]
-
-            messages.append({"role": "user", "content": tool_results})
-
-            # Signal to the frontend that tool processing happened
-            yield f"\n"
+                messages.append({"role": "user", "content": tool_results})
+                yield "\n"
 
         # 5. Persist the full assistant response
         assistant_msg = ChatMessage(
@@ -256,22 +243,100 @@ class ChatService:
     # Helpers
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _build_messages(history: list[ChatMessage]) -> list[dict[str, Any]]:
-        """Convert DB message history to Claude-compatible messages format.
+    # Token budget: ~3K for system prompt, ~1K for company context, ~4K for response
+    # Leaves ~12K for conversation history on Haiku (200K context but we want to stay cheap)
+    MAX_HISTORY_CHARS = 40_000  # ~10K tokens
+    RECENT_MESSAGES_KEEP = 6    # Always keep the last 6 messages verbatim
 
-        Skips system messages and tool call/result messages (those are handled
-        within a single request turn). Keeps the last N messages to avoid
-        exceeding context limits.
+    def _build_messages(self, history: list[ChatMessage]) -> list[dict[str, Any]]:
+        """Convert DB message history to Claude-compatible messages, with compression.
+
+        Strategy:
+        - Always include the last RECENT_MESSAGES_KEEP messages in full
+        - If older messages exist and total chars exceed MAX_HISTORY_CHARS,
+          summarize the older portion into a single condensed message
+        - This keeps the conversation coherent without blowing up token usage
         """
-        MAX_HISTORY_MESSAGES = 50
+        # Filter to user/assistant only
+        relevant = [
+            m for m in history
+            if m.role in (MessageRole.user, MessageRole.assistant)
+        ]
+
+        if not relevant:
+            return []
+
+        # Split into old and recent
+        if len(relevant) <= self.RECENT_MESSAGES_KEEP:
+            # Short conversation — return everything
+            return [
+                {"role": "user" if m.role == MessageRole.user else "assistant", "content": m.content}
+                for m in relevant
+            ]
+
+        old_messages = relevant[:-self.RECENT_MESSAGES_KEEP]
+        recent_messages = relevant[-self.RECENT_MESSAGES_KEEP:]
+
+        # Check if old messages are too large
+        old_chars = sum(len(m.content) for m in old_messages)
+        recent_chars = sum(len(m.content) for m in recent_messages)
+
         messages: list[dict[str, Any]] = []
 
-        # Only include user and assistant messages for conversation context
-        for msg in history[-MAX_HISTORY_MESSAGES:]:
-            if msg.role == MessageRole.user:
-                messages.append({"role": "user", "content": msg.content})
-            elif msg.role == MessageRole.assistant:
-                messages.append({"role": "assistant", "content": msg.content})
+        if old_chars + recent_chars > self.MAX_HISTORY_CHARS:
+            # Compress old messages into a summary
+            summary = self._compress_old_messages(old_messages)
+            messages.append({
+                "role": "user",
+                "content": f"[Previous conversation summary: {summary}]",
+            })
+            messages.append({
+                "role": "assistant",
+                "content": "Understood, I have the context from our earlier conversation.",
+            })
+        else:
+            # Old messages fit — include them all
+            for m in old_messages:
+                messages.append({
+                    "role": "user" if m.role == MessageRole.user else "assistant",
+                    "content": m.content,
+                })
+
+        # Always include recent messages in full
+        for m in recent_messages:
+            messages.append({
+                "role": "user" if m.role == MessageRole.user else "assistant",
+                "content": m.content,
+            })
 
         return messages
+
+    @staticmethod
+    def _compress_old_messages(messages: list[ChatMessage]) -> str:
+        """Create a concise summary of older messages to preserve context."""
+        # Extract key topics and decisions from the conversation
+        user_points = []
+        assistant_points = []
+
+        for m in messages:
+            # Take the first 150 chars of each message as a digest
+            snippet = m.content[:150].replace("\n", " ").strip()
+            if len(m.content) > 150:
+                snippet += "..."
+
+            if m.role == MessageRole.user:
+                user_points.append(snippet)
+            else:
+                assistant_points.append(snippet)
+
+        # Build a compact summary
+        parts = []
+        if user_points:
+            # Keep at most 8 user points
+            points = user_points[-8:] if len(user_points) > 8 else user_points
+            parts.append("User discussed: " + " | ".join(points))
+        if assistant_points:
+            points = assistant_points[-8:] if len(assistant_points) > 8 else assistant_points
+            parts.append("Assistant covered: " + " | ".join(points))
+
+        return " ".join(parts) if parts else "General discussion about the company."

@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Enum, ForeignKey, Integer, String, Text, func
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -46,9 +46,9 @@ class Report(Base):
     language: Mapped[ReportLanguage] = mapped_column(Enum(ReportLanguage), default=ReportLanguage.en)
     version: Mapped[int] = mapped_column(Integer, default=1)
     approved_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    approved_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     assessment: Mapped["Assessment"] = relationship(back_populates="reports")
     company: Mapped["Company"] = relationship(back_populates="reports")
@@ -69,9 +69,9 @@ class ReportSection(Base):
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     is_ai_generated: Mapped[bool] = mapped_column(default=True)
     last_edited_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    last_edited_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+    last_edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     report: Mapped["Report"] = relationship(back_populates="sections")
     editor: Mapped["User | None"] = relationship(foreign_keys=[last_edited_by])

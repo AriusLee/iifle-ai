@@ -1,8 +1,8 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
-from sqlalchemy import Enum, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import DateTime, Enum, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -33,11 +33,11 @@ class IntakeStage(Base):
     data: Mapped[dict] = mapped_column(JSONB, default=dict)
     completed_sections: Mapped[list] = mapped_column(JSONB, default=list)
     submitted_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    submitted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     validated_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    validated_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+    validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     company: Mapped["Company"] = relationship(back_populates="intake_stages")
     submitter: Mapped["User | None"] = relationship(foreign_keys=[submitted_by])

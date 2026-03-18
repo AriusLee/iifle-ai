@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any, TypedDict
 
-from app.services.ai.client import AnthropicClient
+from app.services.ai.provider import get_ai_client
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +206,7 @@ class AIScorer:
     """Scores qualitative dimensions by calling Claude with rubric-guided prompts."""
 
     def __init__(self, client: AnthropicClient | None = None) -> None:
-        self._client = client or AnthropicClient()
+        self._client = client or get_ai_client()
 
     # ------------------------------------------------------------------
     # Gene Structure dimensions

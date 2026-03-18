@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     JWT_EXPIRY_HOURS: int = 24
 
     ANTHROPIC_API_KEY: str = ""
+    GROQ_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
+    AI_PROVIDER: str = "gemini"  # "gemini" (free+web search), "groq" (free), "anthropic" (paid)
 
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"
 

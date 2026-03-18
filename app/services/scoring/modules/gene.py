@@ -10,7 +10,7 @@ import asyncio
 import logging
 from typing import Any, TypedDict
 
-from app.services.ai.client import AnthropicClient
+from app.services.ai.provider import get_ai_client
 from app.services.scoring.ai_scorer import AIScorer, DimensionResult
 from app.services.scoring.rule_based import (
     gene_checklist_modifier,
@@ -78,34 +78,41 @@ class GeneStructureScorer:
     """Orchestrates scoring for all 7 Gene Structure dimensions."""
 
     def __init__(self, client: AnthropicClient | None = None) -> None:
-        self._client = client or AnthropicClient()
+        self._client = client or get_ai_client()
         self._ai = AIScorer(self._client)
 
     async def score(
         self,
         intake_data: dict[str, Any],
         research_data: dict[str, Any] | None = None,
+        progress_callback=None,
     ) -> ModuleResult:
-        """Score all 7 dimensions in parallel where possible and return ModuleResult."""
+        """Score all 7 dimensions sequentially with progress updates."""
 
-        # Launch AI-scored dimensions in parallel
-        ai_tasks = {
-            1: asyncio.create_task(self._score_d1(intake_data)),
-            2: asyncio.create_task(self._score_d2(intake_data, research_data)),
-            3: asyncio.create_task(self._score_d3(intake_data)),
-            4: asyncio.create_task(self._score_d4(intake_data)),
-        }
+        async def _progress(msg: str):
+            if progress_callback:
+                await progress_callback(f"Gene Structure: {msg}")
 
-        # Rule-based dimensions can run synchronously
+        await _progress("Analyzing Founder & Leadership...")
+        d1 = await self._score_d1(intake_data)
+
+        await _progress("Evaluating Industry Positioning...")
+        d2 = await self._score_d2(intake_data, research_data)
+
+        await _progress("Assessing Product Competitiveness...")
+        d3 = await self._score_d3(intake_data)
+
+        await _progress("Scoring Enterprise Differentiation...")
+        d4 = await self._score_d4(intake_data)
+
+        await _progress("Checking Replicability & Scalability...")
         d5 = self._score_d5(intake_data)
-        d6 = self._score_d6(intake_data)
-        d7 = self._score_d7(intake_data)
 
-        # Await AI tasks
-        d1 = await ai_tasks[1]
-        d2 = await ai_tasks[2]
-        d3 = await ai_tasks[3]
-        d4 = await ai_tasks[4]
+        await _progress("Evaluating Team Foundation...")
+        d6 = self._score_d6(intake_data)
+
+        await _progress("Calculating Growth Potential...")
+        d7 = self._score_d7(intake_data)
 
         dimensions = [d1, d2, d3, d4, d5, d6, d7]
 

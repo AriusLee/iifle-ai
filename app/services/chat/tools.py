@@ -19,7 +19,7 @@ from app.models.assessment import Assessment, AutoFlag, ModuleScore
 from app.models.intake import IntakeStage
 from app.models.report import Report, ReportSection
 from app.models.research import CompanyResearch, ResearchStatus
-from app.services.ai.client import AnthropicClient
+from app.services.ai.provider import get_ai_client
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +211,7 @@ async def _handle_search_web(
     query = tool_input["query"]
 
     try:
-        client = AnthropicClient()
+        client = get_ai_client()
         # Fetch basic company context for the search
         from app.models.company import Company
 

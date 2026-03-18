@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 class CompanyCreate(BaseModel):
     legal_name: str = Field(min_length=1, max_length=500)
+    brand_name: str | None = None
     registration_number: str | None = None
     date_of_incorporation: date | None = None
     company_type: str | None = None
@@ -18,6 +19,7 @@ class CompanyCreate(BaseModel):
 
 class CompanyUpdate(BaseModel):
     legal_name: str | None = None
+    brand_name: str | None = None
     registration_number: str | None = None
     date_of_incorporation: date | None = None
     company_type: str | None = None
@@ -33,6 +35,7 @@ class CompanyUpdate(BaseModel):
 class CompanyResponse(BaseModel):
     id: uuid.UUID
     legal_name: str
+    brand_name: str | None
     registration_number: str | None
     date_of_incorporation: date | None
     company_type: str | None

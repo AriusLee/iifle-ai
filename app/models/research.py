@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Enum, ForeignKey, String, func
+from sqlalchemy import DateTime, Enum, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -27,9 +27,9 @@ class CompanyResearch(Base):
     industry_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     peer_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     sources: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    research_date: Mapped[datetime | None] = mapped_column(nullable=True)
-    expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+    research_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     company: Mapped["Company"] = relationship(back_populates="research")

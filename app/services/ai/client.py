@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-DEFAULT_MODEL = "claude-sonnet-4-20250514"
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 MAX_RETRIES = 3
 INITIAL_BACKOFF_SECONDS = 1.0
 MAX_CONCURRENT_CALLS = 5

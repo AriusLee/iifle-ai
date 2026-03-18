@@ -24,7 +24,7 @@ from app.models.assessment import (
     ModuleScore as ModuleScoreModel,
 )
 from app.models.intake import IntakeStage
-from app.services.ai.client import AnthropicClient
+from app.services.ai.provider import get_ai_client
 from app.services.scoring.auto_flags import detect_stage1_flags
 from app.services.scoring.modules.business_model import BusinessModelScorer
 from app.services.scoring.modules.gene import GeneStructureScorer
@@ -100,7 +100,7 @@ class ScoringEngine:
     """Orchestrates the full scoring pipeline for a company assessment."""
 
     def __init__(self, client: AnthropicClient | None = None) -> None:
-        self._client = client or AnthropicClient()
+        self._client = client or get_ai_client()
         self._gene_scorer = GeneStructureScorer(self._client)
         self._bm_scorer = BusinessModelScorer(self._client)
 
@@ -113,41 +113,58 @@ class ScoringEngine:
         company_id: uuid.UUID,
         intake_data: dict[str, Any],
         db: AsyncSession,
+        assessment_id: uuid.UUID | None = None,
     ) -> Assessment:
         """Run Stage 1 scoring: auto-flags + Gene Structure + Business Model.
 
-        Creates and persists the Assessment with all child records.
+        If assessment_id is provided, uses that existing record. Otherwise creates a new one.
         """
-        # 1. Create assessment record in pending state
-        assessment = Assessment(
-            id=uuid.uuid4(),
-            company_id=company_id,
-            trigger_stage="1",
-            status=AssessmentStatus.scoring,
-        )
-        db.add(assessment)
-        await db.flush()
+        # 1. Get or create assessment record
+        if assessment_id:
+            from sqlalchemy import select as sa_select
+            result = await db.execute(sa_select(Assessment).where(Assessment.id == assessment_id))
+            assessment = result.scalar_one_or_none()
+            if not assessment:
+                assessment = Assessment(id=assessment_id, company_id=company_id, trigger_stage="1", status=AssessmentStatus.scoring)
+                db.add(assessment)
+            else:
+                assessment.status = AssessmentStatus.scoring
+            await db.flush()
+        else:
+            assessment = Assessment(
+                id=uuid.uuid4(),
+                company_id=company_id,
+                trigger_stage="1",
+                status=AssessmentStatus.scoring,
+            )
+            db.add(assessment)
+            await db.flush()
+
+        async def _update_progress(msg: str):
+            """Update assessment progress message so frontend can show it."""
+            assessment.progress_message = msg
+            await db.flush()
+            await db.commit()
 
         try:
             # 2. Auto-flag detection
+            await _update_progress("Detecting risk flags...")
             flag_records = detect_stage1_flags(intake_data)
 
             # 3. Attempt web research (best-effort)
+            await _update_progress("Gathering research data...")
             research_data = await self._try_research(intake_data)
 
-            # 4. Score modules in parallel
-            import asyncio
-            gene_task = asyncio.create_task(
-                self._gene_scorer.score(intake_data, research_data)
-            )
-            bm_task = asyncio.create_task(
-                self._bm_scorer.score(intake_data, research_data)
-            )
+            # 4. Score Gene Structure (sequential for progress tracking)
+            await _update_progress("Scoring Gene Structure: Founder & Leadership...")
+            gene_result = await self._gene_scorer.score(intake_data, research_data, progress_callback=_update_progress)
 
-            gene_result = await gene_task
-            bm_result = await bm_task
+            # 5. Score Business Model
+            await _update_progress("Scoring Business Model: Customer Analysis...")
+            bm_result = await self._bm_scorer.score(intake_data, research_data, progress_callback=_update_progress)
 
-            # 5. Persist module scores
+            # 6. Persist module scores
+            await _update_progress("Saving scores...")
             gene_module = self._create_module_score(assessment.id, gene_result)
             bm_module = self._create_module_score(assessment.id, bm_result)
             db.add(gene_module)

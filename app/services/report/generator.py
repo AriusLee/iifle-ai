@@ -24,7 +24,7 @@ from app.models.report import (
     ReportStatus,
     ReportType,
 )
-from app.services.ai.client import AnthropicClient
+from app.services.ai.provider import get_ai_client
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ class ReportGenerator:
 
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
-        self._client = AnthropicClient()
+        self._client = get_ai_client()
 
     async def generate_module_report(
         self,

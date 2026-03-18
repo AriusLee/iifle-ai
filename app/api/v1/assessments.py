@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -126,47 +126,65 @@ def _build_detail_response(assessment: Assessment) -> AssessmentDetailResponse:
 
 @router.post(
     "",
-    response_model=AssessmentDetailResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Trigger company scoring",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Trigger company scoring (background)",
 )
 async def trigger_assessment(
     company_id: uuid.UUID,
     body: TriggerAssessmentRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(["admin", "advisor"])),
 ):
-    """Trigger a new Stage 1 assessment for the company.
-
-    This runs the full scoring pipeline: auto-flag detection, Gene Structure,
-    and Business Model scoring (with parallel AI calls).
-    """
+    """Trigger scoring in background — returns immediately with assessment ID."""
     company = await _get_company_or_404(company_id, db)
 
-    # Gather intake data for the requested stage
+    # Gather intake data now (while we have the session)
     intake_data = await _load_intake_data(company_id, body.stage, db)
-
-    # Enrich with company-level info
     intake_data.setdefault("company_name", company.legal_name)
     intake_data.setdefault("primary_industry", company.primary_industry)
     intake_data.setdefault("industry", company.primary_industry)
     intake_data.setdefault("enterprise_stage", company.enterprise_stage or "1.0")
     intake_data.setdefault("country", company.country)
 
-    engine = ScoringEngine()
+    # Create assessment record NOW so frontend can track it
+    from app.models.assessment import Assessment as AssessmentModel, AssessmentStatus
+    assessment = AssessmentModel(
+        id=uuid.uuid4(),
+        company_id=company_id,
+        trigger_stage=body.stage,
+        status=AssessmentStatus.scoring,
+    )
+    db.add(assessment)
+    await db.commit()
+    assessment_id = assessment.id
 
-    try:
-        assessment = await engine.score_stage1(company_id, intake_data, db)
-    except Exception as exc:
-        logger.exception("Scoring engine failed for company %s", company_id)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Scoring failed: {exc}",
-        ) from exc
+    async def _run_scoring():
+        from app.database import async_session_factory
+        from sqlalchemy import update as sql_update
+        try:
+            async with async_session_factory() as session:
+                engine = ScoringEngine()
+                await engine.score_stage1(company_id, intake_data, session, assessment_id=assessment_id)
+                await session.commit()
+                logger.info("Scoring completed for company %s", company_id)
+        except Exception as exc:
+            logger.exception("Background scoring failed for %s: %s", company_id, exc)
+            # Mark assessment as failed with error message
+            try:
+                async with async_session_factory() as err_session:
+                    await err_session.execute(
+                        sql_update(AssessmentModel)
+                        .where(AssessmentModel.id == assessment_id)
+                        .values(status=AssessmentStatus.failed, error_message=str(exc)[:1000])
+                    )
+                    await err_session.commit()
+            except Exception:
+                logger.exception("Failed to save error status for assessment %s", assessment_id)
 
-    # Reload with relationships
-    assessment = await _get_assessment_or_404(assessment.id, company_id, db)
-    return _build_detail_response(assessment)
+    background_tasks.add_task(_run_scoring)
+
+    return {"status": "scoring", "assessment_id": str(assessment_id), "company_id": str(company_id)}
 
 
 @router.get(

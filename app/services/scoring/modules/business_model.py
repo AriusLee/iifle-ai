@@ -10,7 +10,7 @@ import asyncio
 import logging
 from typing import Any, TypedDict
 
-from app.services.ai.client import AnthropicClient
+from app.services.ai.provider import get_ai_client
 from app.services.scoring.ai_scorer import AIScorer, DimensionResult
 from app.services.scoring.rule_based import (
     score_customer_concentration,
@@ -85,34 +85,44 @@ class BusinessModelScorer:
     """Orchestrates scoring for all 8 Business Model dimensions."""
 
     def __init__(self, client: AnthropicClient | None = None) -> None:
-        self._client = client or AnthropicClient()
+        self._client = client or get_ai_client()
         self._ai = AIScorer(self._client)
 
     async def score(
         self,
         intake_data: dict[str, Any],
         research_data: dict[str, Any] | None = None,
+        progress_callback=None,
     ) -> ModuleResult:
-        """Score all 8 dimensions and apply red flags / 10x modifier."""
+        """Score all 8 dimensions sequentially with progress updates."""
 
-        # Launch AI-scored dimensions in parallel
-        ai_tasks = {
-            4: asyncio.create_task(self._score_d4(intake_data)),
-            6: asyncio.create_task(self._score_d6(intake_data)),
-            8: asyncio.create_task(self._score_d8(intake_data)),
-        }
+        async def _progress(msg: str):
+            if progress_callback:
+                await progress_callback(f"Business Model: {msg}")
 
-        # Rule-based dimensions
+        await _progress("Analyzing Customer Base...")
         d1 = self._score_d1(intake_data)
+
+        await _progress("Evaluating Revenue Model...")
         d2 = self._score_d2(intake_data)
+
+        await _progress("Assessing Profitability...")
         d3 = self._score_d3(intake_data)
+
+        await _progress("Scoring Business Model Clarity...")
+        d4 = await self._score_d4(intake_data)
+
+        await _progress("Checking Replicability...")
         d5 = self._score_d5(intake_data)
+
+        await _progress("Evaluating Scalability...")
+        d6 = await self._score_d6(intake_data)
+
+        await _progress("Measuring Recurring Income...")
         d7 = self._score_d7(intake_data)
 
-        # Await AI tasks
-        d4 = await ai_tasks[4]
-        d6 = await ai_tasks[6]
-        d8 = await ai_tasks[8]
+        await _progress("Assessing Platform Potential...")
+        d8 = await self._score_d8(intake_data)
 
         dimensions = [d1, d2, d3, d4, d5, d6, d7, d8]
 

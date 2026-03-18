@@ -77,6 +77,8 @@ class AssessmentResponse(BaseModel):
     overall_rating: str | None
     enterprise_stage: str | None = Field(None, alias="enterprise_stage_classification")
     capital_readiness: str | None
+    error_message: str | None = None
+    progress_message: str | None = None
     created_at: datetime
     updated_at: datetime | None = None
 

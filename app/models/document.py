@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Enum, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, BigInteger, Enum, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -62,7 +62,7 @@ class Document(Base):
     extraction_status: Mapped[ExtractionStatus] = mapped_column(Enum(ExtractionStatus), default=ExtractionStatus.pending)
     extracted_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     uploaded_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     company: Mapped["Company"] = relationship(back_populates="documents")
     uploader: Mapped["User"] = relationship(foreign_keys=[uploaded_by])
