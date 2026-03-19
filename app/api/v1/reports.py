@@ -238,6 +238,40 @@ async def get_report(
     return _report_detail_response(report)
 
 
+@router.get(
+    "/{report_id}/export/pdf",
+    summary="Export report as PDF",
+)
+async def export_report_pdf(
+    company_id: uuid.UUID,
+    report_id: uuid.UUID,
+    language: str = "en",
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(["admin", "advisor", "client"])),
+):
+    """Generate and return a PDF for the given report."""
+    from fastapi.responses import Response
+    from app.services.export.pdf_generator import generate_pdf
+
+    await _get_company_or_404(company_id, db)
+
+    try:
+        pdf_bytes = await generate_pdf(report_id, company_id, db, language)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    # Build filename
+    report = await _get_report_or_404(report_id, company_id, db)
+    safe_title = (report.title or "report").replace(" ", "_").lower()
+    filename = f"{safe_title}_v{report.version}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.put(
     "/{report_id}/sections/{section_id}",
     response_model=ReportSectionResponse,

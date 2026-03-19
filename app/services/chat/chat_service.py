@@ -57,7 +57,9 @@ class ChatService:
 
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
-        self._client = get_ai_client()
+        # Chat always uses Claude (Anthropic) regardless of global AI_PROVIDER
+        from app.services.ai.client import AnthropicClient
+        self._client = AnthropicClient()
 
     # ------------------------------------------------------------------
     # Conversation management
