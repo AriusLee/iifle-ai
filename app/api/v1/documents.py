@@ -1,7 +1,7 @@
 import pathlib
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -207,3 +207,116 @@ async def download_file(
         filename=doc.original_filename,
         media_type=doc.mime_type,
     )
+
+
+@router.post("/{document_id}/extract", status_code=status.HTTP_202_ACCEPTED)
+async def extract_document(
+    company_id: uuid.UUID,
+    document_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Trigger PDF extraction for a document (audited financial report).
+
+    Extracts financial data and maps it to Stage 2 schema fields.
+    Results are stored in document.extracted_data.
+    """
+    from sqlalchemy import select as sa_select
+    from app.models.document import Document
+
+    result = await db.execute(
+        sa_select(Document).where(Document.id == document_id, Document.company_id == company_id)
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    if doc.mime_type not in ("application/pdf", "application/x-pdf"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only PDF documents can be extracted",
+        )
+
+    # Read file bytes
+    local_path = UPLOAD_DIR / str(company_id) / doc.category.value / doc.filename
+    if not local_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found on disk")
+
+    file_bytes = local_path.read_bytes()
+
+    # Update status
+    doc.extraction_status = "processing"
+    await db.commit()
+
+    async def _run_extraction():
+        from app.database import async_session_factory
+        from app.services.ai.document_parser import PDFExtractionService, map_extraction_to_stage2
+        from app.services.ai.provider import get_ai_client
+        from sqlalchemy import update as sql_update
+
+        try:
+            async with async_session_factory() as session:
+                client = get_ai_client()
+                extractor = PDFExtractionService(ai_client=client)
+                extracted = await extractor.extract(file_bytes, filename=doc.original_filename)
+
+                # Map to Stage 2 schema
+                stage2_data = map_extraction_to_stage2(extracted)
+                extracted["stage2_mapped"] = stage2_data
+
+                await session.execute(
+                    sql_update(Document)
+                    .where(Document.id == document_id)
+                    .values(
+                        extraction_status="completed",
+                        extracted_data=extracted,
+                    )
+                )
+                await session.commit()
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).exception("PDF extraction failed: %s", exc)
+            try:
+                async with async_session_factory() as err_session:
+                    await err_session.execute(
+                        sql_update(Document)
+                        .where(Document.id == document_id)
+                        .values(extraction_status="failed")
+                    )
+                    await err_session.commit()
+            except Exception:
+                pass
+
+    background_tasks.add_task(_run_extraction)
+
+    return {
+        "status": "processing",
+        "document_id": str(document_id),
+        "message": "PDF extraction started. Check document status for results.",
+    }
+
+
+@router.get("/{document_id}/extracted")
+async def get_extracted_data(
+    company_id: uuid.UUID,
+    document_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get the extracted data from a processed document."""
+    from sqlalchemy import select as sa_select
+    from app.models.document import Document
+
+    result = await db.execute(
+        sa_select(Document).where(Document.id == document_id, Document.company_id == company_id)
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    return {
+        "document_id": str(document_id),
+        "extraction_status": doc.extraction_status.value if doc.extraction_status else "pending",
+        "extracted_data": doc.extracted_data,
+    }

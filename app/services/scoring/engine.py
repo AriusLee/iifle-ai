@@ -1,6 +1,6 @@
 """
 Scoring Engine Orchestrator — coordinates auto-flag detection and module scoring
-for Stage 1 assessments, persists results, and computes the overall score.
+for Stage 1 and Stage 2 assessments, persists results, and computes the overall score.
 """
 
 from __future__ import annotations
@@ -26,8 +26,11 @@ from app.models.assessment import (
 from app.models.intake import IntakeStage
 from app.services.ai.provider import get_ai_client
 from app.services.scoring.auto_flags import detect_stage1_flags
+from app.services.scoring.auto_flags_stage2 import detect_stage2_flags
 from app.services.scoring.modules.business_model import BusinessModelScorer
+from app.services.scoring.modules.financing import FinancingScorer
 from app.services.scoring.modules.gene import GeneStructureScorer
+from app.services.scoring.modules.valuation import ValuationScorer
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +106,8 @@ class ScoringEngine:
         self._client = client or get_ai_client()
         self._gene_scorer = GeneStructureScorer(self._client)
         self._bm_scorer = BusinessModelScorer(self._client)
+        self._val_scorer = ValuationScorer(self._client)
+        self._fin_scorer = FinancingScorer(self._client)
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -235,6 +240,255 @@ class ScoringEngine:
         return assessment
 
     # ------------------------------------------------------------------
+    # Stage 2 scoring
+    # ------------------------------------------------------------------
+
+    async def score_stage2(
+        self,
+        company_id: uuid.UUID,
+        intake_data: dict[str, Any],
+        db: AsyncSession,
+        assessment_id: uuid.UUID | None = None,
+        stage1_data: dict[str, Any] | None = None,
+    ) -> Assessment:
+        """Run Stage 2 scoring: auto-flags + Valuation (Module 3) + Financing (Module 4).
+
+        Also re-computes the overall score across all scored modules (1-4).
+        """
+        from app.schemas.intake.stage_2 import Stage2Data, calculate_metrics
+
+        # 1. Get or create assessment
+        if assessment_id:
+            result = await db.execute(select(Assessment).where(Assessment.id == assessment_id))
+            assessment = result.scalar_one_or_none()
+            if not assessment:
+                assessment = Assessment(
+                    id=assessment_id, company_id=company_id,
+                    trigger_stage="2", status=AssessmentStatus.scoring,
+                )
+                db.add(assessment)
+            else:
+                assessment.status = AssessmentStatus.scoring
+            await db.flush()
+        else:
+            assessment = Assessment(
+                id=uuid.uuid4(),
+                company_id=company_id,
+                trigger_stage="2",
+                status=AssessmentStatus.scoring,
+            )
+            db.add(assessment)
+            await db.flush()
+
+        async def _update_progress(msg: str):
+            assessment.progress_message = msg
+            await db.flush()
+            await db.commit()
+
+        try:
+            # 2. Calculate financial metrics
+            await _update_progress("Calculating financial metrics...")
+            try:
+                stage2 = Stage2Data(**intake_data)
+            except Exception:
+                stage2 = Stage2Data.model_construct(**intake_data)
+            metrics = calculate_metrics(stage2)
+            metrics_dict = metrics.model_dump(exclude_none=True)
+
+            # Build per-year metric dicts for consistency/sustainability analysis
+            metrics_3yr = self._build_3yr_metrics(intake_data)
+
+            # 3. Auto-flag detection (Stage 2)
+            await _update_progress("Detecting financial risk flags...")
+            flag_records = detect_stage2_flags(intake_data, metrics_dict)
+
+            # 4. Try research data
+            await _update_progress("Loading research data...")
+            research_data = await self._try_research(
+                stage1_data if stage1_data else intake_data
+            )
+
+            # 5. Score Module 3: Valuation
+            await _update_progress("Scoring Valuation: Growth metrics...")
+            val_result = await self._val_scorer.score(
+                intake_data=intake_data,
+                metrics=metrics_dict,
+                research_data=research_data,
+                metrics_3yr=metrics_3yr,
+                progress_callback=_update_progress,
+            )
+
+            # 6. Score Module 4: Financing Structure
+            await _update_progress("Scoring Financing: Enterprise readiness...")
+            fin_result = await self._fin_scorer.score(
+                intake_data=intake_data,
+                metrics=metrics_dict,
+                research_data=research_data,
+                progress_callback=_update_progress,
+            )
+
+            # 7. Persist module scores
+            await _update_progress("Saving scores...")
+            val_module = self._create_module_score(assessment.id, val_result)
+            fin_module = self._create_module_score(assessment.id, fin_result)
+            db.add(val_module)
+            db.add(fin_module)
+            await db.flush()
+
+            # 8. Persist dimension scores
+            for dim in val_result["dimensions"]:
+                db.add(self._create_dimension_score(val_module.id, dim))
+            for dim in fin_result["dimensions"]:
+                db.add(self._create_dimension_score(fin_module.id, dim))
+
+            # 9. Persist auto-flags
+            for flag in flag_records:
+                db.add(AutoFlag(
+                    id=uuid.uuid4(),
+                    assessment_id=assessment.id,
+                    company_id=company_id,
+                    flag_type=flag["flag_type"],
+                    severity=FlagSeverity(flag["severity"]),
+                    description=flag["description"],
+                    source_field=flag.get("source_field"),
+                    source_value=flag.get("source_value"),
+                    stage="2",
+                ))
+
+            # 10. Calculate overall score (modules 1-4 if all available)
+            enterprise_stage = intake_data.get("enterprise_stage", "2.0")
+            module_scores = [
+                {"module_number": 3, "score": val_result["total_score"], "weight": None},
+                {"module_number": 4, "score": fin_result["total_score"], "weight": None},
+            ]
+
+            # Try to include existing Module 1 & 2 scores from latest assessment
+            existing = await self._get_existing_module_scores(company_id, db)
+            for ms in existing:
+                if ms["module_number"] in (1, 2):
+                    module_scores.append(ms)
+
+            overall = self.calculate_overall_score(module_scores, enterprise_stage)
+
+            # 11. Update assessment
+            assessment.overall_score = Decimal(str(round(overall, 2)))
+            assessment.overall_rating = _overall_rating(overall)
+            assessment.enterprise_stage_classification = enterprise_stage
+            assessment.capital_readiness = _capital_readiness(overall)
+            assessment.status = AssessmentStatus.draft
+            assessment.updated_at = datetime.now(timezone.utc)
+
+            await db.flush()
+
+            # 12. Auto-trigger report generation (best-effort)
+            try:
+                from app.services.report.generator import ReportGenerator
+
+                generator = ReportGenerator(db)
+                await generator.generate_module_report(assessment.id, 3, company_id)
+                await generator.generate_module_report(assessment.id, 4, company_id)
+                logger.info(
+                    "Auto-generated Module 3 & 4 reports for assessment %s",
+                    assessment.id,
+                )
+            except Exception as report_exc:
+                logger.warning(
+                    "Auto report generation failed for assessment %s: %s",
+                    assessment.id, report_exc,
+                )
+
+        except Exception:
+            assessment.status = AssessmentStatus.failed
+            logger.exception("Stage 2 scoring failed for company %s", company_id)
+            raise
+
+        return assessment
+
+    # ------------------------------------------------------------------
+    # Helpers for Stage 2
+    # ------------------------------------------------------------------
+
+    def _build_3yr_metrics(self, intake_data: dict[str, Any]) -> list[dict[str, Any]]:
+        """Build per-year metric dicts from Stage 2 data for CV/trend analysis."""
+        metrics_3yr: list[dict[str, Any]] = []
+        inc = intake_data.get("income_statement", {}) or {}
+        bs = intake_data.get("balance_sheet", {}) or {}
+
+        for year_key in ["year_t2", "year_t1", "year_t0"]:
+            yr_inc = inc.get(year_key, {}) or {}
+            yr_bs = bs.get(year_key, {}) or {}
+            if not yr_inc and not yr_bs:
+                continue
+
+            yr: dict[str, Any] = {}
+            rev = yr_inc.get("total_revenue", 0) or 0
+            pat = yr_inc.get("profit_after_tax", 0) or 0
+            gp = yr_inc.get("gross_profit", 0) or 0
+            cogs = yr_inc.get("cost_of_goods_sold", 0) or 0
+            ebit = yr_inc.get("ebit", 0) or 0
+
+            if rev > 0:
+                yr["gross_margin"] = (gp / rev) * 100
+                yr["net_margin"] = (pat / rev) * 100
+                yr["ebit_margin"] = (ebit / rev) * 100
+                if yr_bs.get("trade_receivables"):
+                    yr["receivable_days"] = (yr_bs["trade_receivables"] / rev) * 365
+
+            ta = yr_bs.get("total_assets", 0) or 0
+            te = yr_bs.get("total_equity", 0) or 0
+            if ta > 0:
+                yr["roa"] = (pat / ta) * 100
+                yr["asset_turnover"] = rev / ta
+            if te > 0:
+                yr["roe"] = (pat / te) * 100
+
+            if yr_bs.get("total_current_liabilities") and yr_bs["total_current_liabilities"] > 0:
+                yr["current_ratio"] = (yr_bs.get("total_current_assets", 0) or 0) / yr_bs["total_current_liabilities"]
+
+            if cogs > 0 and yr_bs.get("inventory"):
+                yr["inventory_days"] = (yr_bs["inventory"] / cogs) * 365
+            if cogs > 0 and yr_bs.get("trade_payables"):
+                yr["payable_days"] = (yr_bs["trade_payables"] / cogs) * 365
+
+            ie = yr_inc.get("interest_expense", 0) or 0
+            if ie > 0:
+                yr["interest_coverage"] = ebit / ie
+
+            metrics_3yr.append(yr)
+
+        return metrics_3yr
+
+    async def _get_existing_module_scores(
+        self,
+        company_id: uuid.UUID,
+        db: AsyncSession,
+    ) -> list[dict[str, Any]]:
+        """Retrieve existing module scores from the latest assessment for this company."""
+        result = await db.execute(
+            select(Assessment)
+            .where(Assessment.company_id == company_id)
+            .where(Assessment.status.in_([AssessmentStatus.draft, AssessmentStatus.review, AssessmentStatus.approved]))
+            .order_by(Assessment.created_at.desc())
+            .limit(1)
+        )
+        latest = result.scalar_one_or_none()
+        if not latest:
+            return []
+
+        ms_result = await db.execute(
+            select(ModuleScoreModel).where(ModuleScoreModel.assessment_id == latest.id)
+        )
+        scores = ms_result.scalars().all()
+        return [
+            {
+                "module_number": ms.module_number,
+                "score": float(ms.total_score) if ms.total_score else None,
+                "weight": None,
+            }
+            for ms in scores
+        ]
+
+    # ------------------------------------------------------------------
     # Overall score calculation
     # ------------------------------------------------------------------
 
@@ -317,7 +571,11 @@ class ScoringEngine:
         """Create a ModuleScore ORM instance from a module result dict."""
         # Determine weight based on module number
         module_num = result["module_number"]
-        weight_map = {1: Decimal("0.150"), 2: Decimal("0.200")}  # Stage 1 defaults
+        weight_map = {
+            1: Decimal("0.150"), 2: Decimal("0.200"),
+            3: Decimal("0.200"), 4: Decimal("0.150"),
+            5: Decimal("0.100"), 6: Decimal("0.200"),
+        }
         return ModuleScoreModel(
             id=uuid.uuid4(),
             assessment_id=assessment_id,

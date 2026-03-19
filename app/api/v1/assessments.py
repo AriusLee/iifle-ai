@@ -159,18 +159,37 @@ async def trigger_assessment(
     await db.commit()
     assessment_id = assessment.id
 
+    # Load Stage 1 data too (for Stage 2 scoring context)
+    stage1_data = None
+    if body.stage == "2":
+        stage1_data = await _load_intake_data(company_id, "1", db)
+        if stage1_data:
+            stage1_data.setdefault("company_name", company.legal_name)
+            stage1_data.setdefault("primary_industry", company.primary_industry)
+
+    trigger_stage = body.stage
+
     async def _run_scoring():
         from app.database import async_session_factory
         from sqlalchemy import update as sql_update
         try:
             async with async_session_factory() as session:
                 engine = ScoringEngine()
-                await engine.score_stage1(company_id, intake_data, session, assessment_id=assessment_id)
+                if trigger_stage == "2":
+                    await engine.score_stage2(
+                        company_id, intake_data, session,
+                        assessment_id=assessment_id,
+                        stage1_data=stage1_data,
+                    )
+                else:
+                    await engine.score_stage1(
+                        company_id, intake_data, session,
+                        assessment_id=assessment_id,
+                    )
                 await session.commit()
-                logger.info("Scoring completed for company %s", company_id)
+                logger.info("Scoring (stage %s) completed for company %s", trigger_stage, company_id)
         except Exception as exc:
             logger.exception("Background scoring failed for %s: %s", company_id, exc)
-            # Mark assessment as failed with error message
             try:
                 async with async_session_factory() as err_session:
                     await err_session.execute(
