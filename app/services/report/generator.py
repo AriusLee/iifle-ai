@@ -117,6 +117,7 @@ class ReportGenerator:
         assessment_id: uuid.UUID,
         module_number: int,
         company_id: uuid.UUID,
+        tier: str = "standard",
     ) -> Report:
         """Generate a full report for a specific module.
 

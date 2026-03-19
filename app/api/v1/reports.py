@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -28,6 +28,19 @@ from app.services.report.review_service import ReviewService
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# Schemas (inline — small request model)
+# ---------------------------------------------------------------------------
+
+from pydantic import BaseModel, Field
+
+
+class GenerateReportRequest(BaseModel):
+    module_number: int = Field(..., ge=1, le=6, description="Module number to generate report for")
+    assessment_id: str = Field(..., description="Assessment ID to generate report from")
+    tier: str = Field("standard", description="Report tier: essential, standard, or premium")
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +125,79 @@ def _report_detail_response(report: Report) -> ReportDetailResponse:
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/generate",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Generate a report for a module (background)",
+)
+async def generate_report(
+    company_id: uuid.UUID,
+    body: GenerateReportRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(["admin", "advisor"])),
+):
+    """Trigger AI report generation for a specific module. Runs in background."""
+    await _get_company_or_404(company_id, db)
+
+    assessment_id = uuid.UUID(body.assessment_id)
+
+    # Verify assessment exists and belongs to this company
+    from app.models.assessment import Assessment as AssessmentModel
+
+    result = await db.execute(
+        select(AssessmentModel).where(
+            AssessmentModel.id == assessment_id,
+            AssessmentModel.company_id == company_id,
+        )
+    )
+    assessment = result.scalar_one_or_none()
+    if not assessment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Assessment not found"
+        )
+
+    module_number = body.module_number
+    tier = body.tier
+
+    async def _run_generation():
+        from app.database import async_session_factory
+        from app.services.report.generator import ReportGenerator
+
+        try:
+            async with async_session_factory() as session:
+                generator = ReportGenerator(session)
+                await generator.generate_module_report(
+                    assessment_id=assessment_id,
+                    module_number=module_number,
+                    company_id=company_id,
+                    tier=tier,
+                )
+                await session.commit()
+                logger.info(
+                    "Report generated for module %d, company %s",
+                    module_number,
+                    company_id,
+                )
+        except Exception as exc:
+            logger.exception(
+                "Report generation failed for module %d, company %s: %s",
+                module_number,
+                company_id,
+                exc,
+            )
+
+    background_tasks.add_task(_run_generation)
+
+    return {
+        "status": "generating",
+        "module_number": module_number,
+        "assessment_id": str(assessment_id),
+        "company_id": str(company_id),
+    }
+
 
 @router.get(
     "",
