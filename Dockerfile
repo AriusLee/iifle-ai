@@ -12,9 +12,9 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends \
     libcairo2 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml .
+# Copy all source code first, then install
+COPY . .
 RUN pip install --no-cache-dir .
 
-COPY . .
-
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "10000"]
+# Run migrations and seed on startup
+CMD bash -c "alembic upgrade head && python -m scripts.seed_demo && uvicorn app.main:app --host 0.0.0.0 --port 10000"
