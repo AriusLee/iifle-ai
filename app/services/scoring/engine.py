@@ -102,7 +102,7 @@ def _capital_readiness(score: float) -> CapitalReadiness:
 class ScoringEngine:
     """Orchestrates the full scoring pipeline for a company assessment."""
 
-    def __init__(self, client: AnthropicClient | None = None) -> None:
+    def __init__(self, client: Any = None) -> None:
         self._client = client or get_ai_client()
         self._gene_scorer = GeneStructureScorer(self._client)
         self._bm_scorer = BusinessModelScorer(self._client)

@@ -205,7 +205,7 @@ SWIFT_HAULAGE_CALIBRATION = {
 class AIScorer:
     """Scores qualitative dimensions by calling Claude with rubric-guided prompts."""
 
-    def __init__(self, client: AnthropicClient | None = None) -> None:
+    def __init__(self, client: Any = None) -> None:
         self._client = client or get_ai_client()
 
     # ------------------------------------------------------------------

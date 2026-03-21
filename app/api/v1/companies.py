@@ -27,7 +27,7 @@ async def _run_dd_research(company_id: uuid.UUID) -> None:
 
     from app.config import settings as current_settings
     # Check any AI provider is configured
-    if not (current_settings.ANTHROPIC_API_KEY or current_settings.GROQ_API_KEY or current_settings.GEMINI_API_KEY):
+    if not current_settings.GROQ_API_KEY:
         logger.info("Skipping DD research — no AI API key configured")
         return
 

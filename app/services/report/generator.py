@@ -219,7 +219,7 @@ class ReportGenerator:
     ) -> dict[str, str]:
         """Generate narrative text for a single report section.
 
-        Uses AnthropicClient.generate_narrative for each language,
+        Uses AI client generate_narrative for each language,
         then returns both English and Chinese content.
         """
         # Merge scores into context

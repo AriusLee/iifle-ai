@@ -87,10 +87,10 @@ async def trigger_auto_intake(
         )
 
     # Check API key configured
-    if not settings.ANTHROPIC_API_KEY:
+    if not settings.GROQ_API_KEY:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI service not configured — ANTHROPIC_API_KEY is not set",
+            detail="AI service not configured — GROQ_API_KEY is not set",
         )
 
     # Run in background (uses its own DB session)

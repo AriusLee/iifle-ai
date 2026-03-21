@@ -1,25 +1,21 @@
 """
 ChatService — the main chat orchestrator that manages conversations,
-streams Claude responses with tool_use, and persists messages.
+streams Groq responses, and persists messages.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.models.chat import ChatConversation, ChatMessage, ContextType, MessageRole
 from app.services.ai.provider import get_ai_client
 from app.services.chat.context_builder import build_chat_context
-from app.services.chat.tools import CHAT_TOOLS, execute_tool
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +45,6 @@ You have access to the following company data and tools:
 - If you don't have enough information to answer, say so clearly.
 """
 
-MAX_TOOL_ITERATIONS = 8
 
 
 class ChatService:
@@ -146,87 +141,12 @@ class ChatService:
         history = await self.get_conversation_history(conversation_id)
         messages = self._build_messages(history)
 
-        # 4. Stream response — provider-agnostic
+        # 4. Stream response via Groq
         full_response_text = ""
 
-        from app.services.ai.groq_client import GroqClient
-        from app.services.ai.gemini_client import GeminiClient
-
-        if isinstance(self._client, (GroqClient, GeminiClient)):
-            # Groq/Gemini: simple streaming, no tool_use
-            async for chunk in self._client.stream_chat(system_prompt, messages):
-                full_response_text += chunk
-                yield chunk
-        else:
-            # Anthropic: streaming with tool_use loop
-            tool_calls_metadata: list[dict[str, Any]] = []
-
-            for iteration in range(MAX_TOOL_ITERATIONS):
-                collected_text = ""
-                tool_use_blocks: list[dict[str, Any]] = []
-                current_tool_use: dict[str, Any] | None = None
-                current_tool_json = ""
-
-                async with self._client._client.messages.stream(
-                    model="claude-haiku-4-5-20251001",
-                    system=system_prompt,
-                    messages=messages,
-                    tools=CHAT_TOOLS,
-                    max_tokens=4096,
-                    temperature=0.3,
-                ) as stream:
-                    async for event in stream:
-                        if event.type == "content_block_start":
-                            if event.content_block.type == "tool_use":
-                                current_tool_use = {
-                                    "id": event.content_block.id,
-                                    "name": event.content_block.name,
-                                    "input": {},
-                                }
-                                current_tool_json = ""
-                        elif event.type == "content_block_delta":
-                            if event.delta.type == "text_delta":
-                                collected_text += event.delta.text
-                                yield event.delta.text
-                            elif event.delta.type == "input_json_delta":
-                                if current_tool_use is not None:
-                                    current_tool_json += event.delta.partial_json
-                        elif event.type == "content_block_stop":
-                            if current_tool_use is not None:
-                                try:
-                                    current_tool_use["input"] = json.loads(current_tool_json) if current_tool_json else {}
-                                except json.JSONDecodeError:
-                                    current_tool_use["input"] = {}
-                                tool_use_blocks.append(current_tool_use)
-                                current_tool_use = None
-                                current_tool_json = ""
-
-                full_response_text += collected_text
-
-                if not tool_use_blocks:
-                    break
-
-                assistant_content: list[dict[str, Any]] = []
-                if collected_text:
-                    assistant_content.append({"type": "text", "text": collected_text})
-                for tu in tool_use_blocks:
-                    assistant_content.append({
-                        "type": "tool_use",
-                        "id": tu["id"],
-                        "name": tu["name"],
-                        "input": tu["input"],
-                    })
-                messages.append({"role": "assistant", "content": assistant_content})
-
-                tool_results: list[dict[str, Any]] = []
-                for tu in tool_use_blocks:
-                    tool_calls_metadata.append({"tool": tu["name"], "input": tu["input"]})
-                    result_str = await execute_tool(tu["name"], tu["input"], self._db, company_id)
-                    tool_results.append({"type": "tool_result", "tool_use_id": tu["id"], "content": result_str})
-                    tool_calls_metadata[-1]["result_preview"] = result_str[:200]
-
-                messages.append({"role": "user", "content": tool_results})
-                yield "\n"
+        async for chunk in self._client.stream_chat(system_prompt, messages):
+            full_response_text += chunk
+            yield chunk
 
         # 5. Persist the full assistant response
         assistant_msg = ChatMessage(
@@ -234,7 +154,7 @@ class ChatService:
             conversation_id=conversation_id,
             role=MessageRole.assistant,
             content=full_response_text,
-            metadata_={"tool_calls": tool_calls_metadata} if tool_calls_metadata else {},
+            metadata_={},
         )
         self._db.add(assistant_msg)
         await self._db.flush()

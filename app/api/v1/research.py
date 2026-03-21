@@ -57,10 +57,10 @@ async def trigger_research(
     """Manually trigger DD research for a company."""
     from app.config import settings
 
-    if not settings.ANTHROPIC_API_KEY:
+    if not settings.GROQ_API_KEY:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No API key configured. Go to Settings to add your Claude API key.",
+            detail="No API key configured. Go to Settings to add your Groq API key.",
         )
 
     async def _run(cid: uuid.UUID):

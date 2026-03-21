@@ -209,7 +209,7 @@ class PDFExtractionService:
             try:
                 ai_result = await self._extract_with_vision(file_bytes)
                 result.update(ai_result)
-                result["extraction_method"] = "claude_vision"
+                result["extraction_method"] = "ai_vision"
                 result["confidence"] = "medium"
             except Exception as exc:
                 logger.warning("Pass 2 (vision) extraction failed for %s: %s", filename, exc)

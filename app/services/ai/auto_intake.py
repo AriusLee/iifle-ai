@@ -693,9 +693,8 @@ class AutoIntakeService:
         user_content = "".join(parts)
 
         from app.services.ai.groq_client import GroqClient
-        from app.services.ai.gemini_client import GeminiClient
 
-        if isinstance(self._client, (GroqClient, GeminiClient)):
+        if isinstance(self._client, GroqClient):
             # Groq: ask for JSON directly with EXACT key names
             json_prompt = system_prompt + (
                 "\n\nYou MUST respond with ONLY a valid JSON object using these EXACT top-level keys:\n"

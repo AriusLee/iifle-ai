@@ -77,7 +77,7 @@ def _rating(score: float) -> str:
 class GeneStructureScorer:
     """Orchestrates scoring for all 7 Gene Structure dimensions."""
 
-    def __init__(self, client: AnthropicClient | None = None) -> None:
+    def __init__(self, client: Any = None) -> None:
         self._client = client or get_ai_client()
         self._ai = AIScorer(self._client)
 

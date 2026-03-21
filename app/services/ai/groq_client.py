@@ -1,6 +1,5 @@
 """
-Groq API client — free alternative to Anthropic for development.
-Implements the same interface as AnthropicClient using Groq's Llama models.
+Groq API client — primary AI provider using Groq's Llama models.
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ GROQ_MODEL = "llama-3.3-70b-versatile"  # Free, fast, good quality
 
 
 class GroqClient:
-    """Groq-backed AI client with the same interface as AnthropicClient."""
+    """Groq-backed AI client."""
 
     def __init__(self, api_key: str | None = None) -> None:
         resolved_key = api_key or settings.GROQ_API_KEY
