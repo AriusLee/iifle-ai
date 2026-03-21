@@ -159,16 +159,18 @@ def _format_intake_data(stages: list[IntakeStage]) -> str:
     lines = ["## Intake Data"]
     for stage in stages:
         lines.append(f"\n### Stage {stage.stage.value} (Status: {stage.status.value})")
-        if stage.data:
-            # Summarise key fields rather than dumping everything
-            data = stage.data
-            if isinstance(data, dict):
-                for key, value in data.items():
-                    # Truncate very long values
-                    val_str = json.dumps(value, default=str) if not isinstance(value, str) else value
-                    if len(val_str) > 500:
-                        val_str = val_str[:497] + "..."
-                    lines.append(f"- **{key}**: {val_str}")
+        if stage.data and isinstance(stage.data, dict):
+            # Only include top-level keys and short summaries to keep context small
+            for key, value in stage.data.items():
+                if isinstance(value, dict):
+                    # Summarise dict as key list
+                    sub_keys = list(value.keys())[:8]
+                    val_str = f"{{{', '.join(sub_keys)}{'...' if len(value) > 8 else ''}}}"
+                elif isinstance(value, list):
+                    val_str = f"[{len(value)} items]"
+                else:
+                    val_str = str(value)[:200]
+                lines.append(f"- **{key}**: {val_str}")
         if stage.completed_sections:
             lines.append(f"- Completed sections: {', '.join(str(s) for s in stage.completed_sections)}")
     return "\n".join(lines)
@@ -226,12 +228,10 @@ def _format_report(report: Report) -> str:
     if report.sections:
         lines.append("\n### Report Sections")
         for section in sorted(report.sections, key=lambda s: s.sort_order):
-            lines.append(f"\n#### {section.section_title} (key: {section.section_key})")
+            lines.append(f"- {section.section_title} (key: {section.section_key})")
             if section.content_en:
-                content = section.content_en
-                if len(content) > 800:
-                    content = content[:797] + "..."
-                lines.append(content)
+                content = section.content_en[:200] + "..." if len(section.content_en) > 200 else section.content_en
+                lines.append(f"  Preview: {content}")
 
     return "\n".join(lines)
 

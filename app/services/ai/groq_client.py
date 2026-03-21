@@ -16,6 +16,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 GROQ_MODEL = "llama-3.3-70b-versatile"  # Free, fast, good quality
+GROQ_CHAT_MODEL = "llama-3.1-8b-instant"  # Higher rate limits for chat (30K TPM)
 
 
 class GroqClient:
@@ -130,10 +131,10 @@ class GroqClient:
         messages: list[dict[str, str]],
         temperature: float = 0.3,
     ):
-        """Stream a chat response. Yields text chunks."""
+        """Stream a chat response. Uses smaller model for higher rate limits."""
         async with self._semaphore:
             stream = await self._client.chat.completions.create(
-                model=GROQ_MODEL,
+                model=GROQ_CHAT_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     *messages,
