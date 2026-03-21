@@ -1,9 +1,17 @@
 from pydantic_settings import BaseSettings
+from pydantic import model_validator
 
 
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://iifle:iifle_dev_password@localhost:5432/iifle"
     REDIS_URL: str = "redis://localhost:6379/0"
+
+    @model_validator(mode="after")
+    def fix_database_url(self):
+        """Render provides postgresql:// but asyncpg needs postgresql+asyncpg://"""
+        if self.DATABASE_URL.startswith("postgresql://"):
+            self.DATABASE_URL = self.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return self
 
     S3_BUCKET: str = "iifle-documents"
     S3_ENDPOINT: str = "http://localhost:9000"

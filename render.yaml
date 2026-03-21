@@ -1,0 +1,41 @@
+databases:
+  - name: iifle-db
+    plan: free
+    databaseName: iifle
+    user: iifle
+
+services:
+  - type: web
+    name: iifle-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: iifle-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        value: '["https://your-frontend-url.vercel.app"]'
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_ACCESS_KEY
+        sync: false
+      - key: S3_SECRET_KEY
+        sync: false
+      - key: S3_REGION
+        sync: false
+      - key: REDIS_URL
+        sync: false
+    healthCheckPath: /health
