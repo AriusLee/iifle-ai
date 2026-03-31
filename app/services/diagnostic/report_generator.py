@@ -16,61 +16,55 @@ from app.services.ai.provider import get_ai_client
 
 logger = logging.getLogger(__name__)
 
-# Report sections for the Unicorn Diagnostic
+# Report sections for the Unicorn Diagnostic (8-section template)
 DIAGNOSTIC_SECTIONS = [
     {
-        "key": "executive_summary",
-        "title_en": "Executive Summary",
-        "title_cn": "总体诊断概述",
+        "key": "enterprise_profile",
+        "title_en": "Enterprise Profile & Stage Assessment",
+        "title_cn": "企业画像与阶段判断",
         "sort_order": 1,
     },
     {
-        "key": "enterprise_stage",
-        "title_en": "Enterprise Stage Assessment",
-        "title_cn": "企业阶段判定",
+        "key": "key_highlights",
+        "title_en": "Key Questionnaire Highlights",
+        "title_cn": "关键勾选摘要",
         "sort_order": 2,
     },
     {
-        "key": "gene_structure",
-        "title_en": "Gene Structure Diagnosis",
-        "title_cn": "基因结构诊断",
+        "key": "six_scores",
+        "title_en": "Six Structure Scores",
+        "title_cn": "六大结构评分",
         "sort_order": 3,
     },
     {
-        "key": "business_model",
-        "title_en": "Business Model Diagnosis",
-        "title_cn": "商业模式诊断",
+        "key": "ai_assessment",
+        "title_en": "AI Overall Assessment",
+        "title_cn": "AI总判断",
         "sort_order": 4,
     },
     {
-        "key": "growth_valuation",
-        "title_en": "Growth & Valuation Potential",
-        "title_cn": "增长与估值潜力",
+        "key": "unicorn_pathway",
+        "title_en": "Unicorn Pathway",
+        "title_cn": "独角兽路径图",
         "sort_order": 5,
     },
     {
-        "key": "financing_readiness",
-        "title_en": "Financing & Capital Readiness",
-        "title_cn": "融资与资本准备度",
+        "key": "action_plan_90d",
+        "title_en": "90-Day Action Plan",
+        "title_cn": "90天行动建议",
         "sort_order": 6,
     },
     {
-        "key": "exit_listing",
-        "title_en": "Exit & Listing Direction",
-        "title_cn": "退出与上市方向",
+        "key": "upgrade_assessment",
+        "title_en": "Upgrade Assessment",
+        "title_cn": "升级判断",
         "sort_order": 7,
     },
     {
-        "key": "growth_pathway",
-        "title_en": "Growth Pathway Recommendations",
-        "title_cn": "做大做强路径建议",
+        "key": "next_steps",
+        "title_en": "Recommended Next Steps",
+        "title_cn": "建议承接方向",
         "sort_order": 8,
-    },
-    {
-        "key": "action_items",
-        "title_en": "Key Bottlenecks & Action Items",
-        "title_cn": "主要卡点与行动建议",
-        "sort_order": 9,
     },
 ]
 
@@ -121,113 +115,147 @@ Country: {company.country}
 def _get_section_prompt(section_key: str) -> str:
     """Get the AI prompt for a specific report section."""
     prompts = {
-        "executive_summary": """Write an executive summary. Structure:
+        "enterprise_profile": """Write a company portrait and stage assessment. Structure:
 
-1. **One-paragraph verdict** — what kind of company is this, what stage, and what's the core tension/contradiction in their position
-2. **Top 3 strengths** — be specific, reference scores and what they mean in industry context
-3. **Top 3 bottlenecks** — be brutally honest, explain WHY each is a problem
-4. **One-line conclusion** — the single most important thing this company should do next
+1. **Industry & positioning** — what industry, what sub-segment, what's the company's core offering
+2. **Current stage → Target stage** — where they are now and where they want to go. Be specific (e.g., "初创验证期 → 规模扩张期")
+3. **One-sentence verdict** — capture the key tension in ONE sentence. Reference the 云桥企服 example style: "已跑出基础营收但仍属老板驱动成交" — be specific to THIS company, not generic.
+4. **Key characteristics** — 3-4 defining traits of this company (positive and negative). What makes them who they are right now?
 
-DO NOT list question numbers. Synthesize as if you personally assessed this company.
-Use industry benchmarks from the web research to contextualize scores.
-500-700 words in Chinese, 200-300 in English.""",
+Be specific, not generic. This should read like a consultant who has deeply understood the company, not a template fill-in.
+300-400 words in Chinese, 100-150 in English.""",
 
-        "enterprise_stage": """Analyze the enterprise's current development stage. Cover:
+        "key_highlights": """Pick the ~11 most revealing answers from the questionnaire data. These should be the answers that MOST define the company's current position and contradictions.
 
-1. **Stage classification and WHY** — what specific indicators place them here? Are there contradictions? (e.g., a 5-year-old company with no stable revenue is unusual — explain why this might be)
-2. **Contradiction analysis** — identify conflicting signals in the data (e.g., high capital readiness but low business maturity)
-3. **Peer comparison** — reference real companies in similar industries/stages from the web research. How does this company compare?
-4. **Stage advancement criteria** — list 3-4 SPECIFIC conditions to reach the next stage (with numbers, e.g., "achieve MRR of RM XX" not "improve revenue")
+Format as a bullet list. Each bullet:
+**问题要点：回答 → 含义**
 
+Example format:
+- **团队规模：5人以下** → 仍处于创始人单兵作战阶段，尚未建立可复制的组织能力
+- **客户获取方式：纯靠老板人脉** → 增长天花板明显，无法规模化
+
+Focus on answers that reveal:
+- Contradictions (claims big ambition but small team)
+- Bottlenecks (single point of failure areas)
+- Strengths (proven traction, real revenue)
+- Stage indicators (what actually defines where they are)
+
+Do NOT list all 35 answers — only the ~11 most diagnostic ones. Do NOT reference question numbers (Q01, Q07, etc.).
+300-400 words in Chinese, 100-150 in English.""",
+
+        "six_scores": """Present the 6 module scores clearly and concisely. This section should be SHORT — the scores are already in the data, your job is to present them with meaning.
+
+For each of the 6 modules, present:
+- **Module name**: Score/100 — Rating
+- One-line assessment of what this score means FOR THIS SPECIFIC COMPANY
+
+After all 6, add:
+- **Highlight the HIGHEST scoring module** — what does this strength mean strategically?
+- **Highlight the LOWEST scoring module** — what risk does this create?
+
+Keep this section concise. Do not over-explain — the detailed analysis belongs in other sections.
+200-300 words in Chinese, 80-120 in English.""",
+
+        "ai_assessment": """Provide the AI overall assessment with THREE clear subsections:
+
+### 三大核心亮点 (3 Key Highlights)
+- What does this company do WELL? Be specific — reference real data points, scores, and business indicators.
+- Each highlight should be 2-3 sentences: what it is, why it matters, how it compares to peers.
+
+### 三大关键卡点 (3 Key Bottlenecks)
+- What's HOLDING THEM BACK? Be brutally honest.
+- Each bottleneck should explain: the problem, its root cause, and what happens if it's not fixed.
+- Reference specific contradictions in the data.
+
+### 当前不建议动作 (3 Not-Recommended Actions)
+- What should they AVOID doing right now, and WHY?
+- These should be common mistakes companies at this stage make.
+- Example: "不建议现阶段启动融资 — 商业模式尚未验证，估值将被严重压低"
+
+Be direct and opinionated. Write like a senior consultant giving tough-love advice.
 400-500 words in Chinese, 150-200 in English.""",
 
-        "gene_structure": """Analyze the enterprise DNA / gene structure. This is about whether the foundation is worth scaling.
+        "unicorn_pathway": """Design a THREE-PHASE unicorn growth pathway. Adapt the phases to the company's current stage:
 
-1. **Founder dependency deep-dive** — what exactly breaks if the founder leaves? Decision-making? Client relationships? Product direction? Be specific about the risk.
-2. **Organizational maturity** — compare to industry benchmarks. At this company's age, what level of organizational independence should they have? Reference real companies that successfully transitioned.
-3. **Brand positioning gap** — how clear is their market position? In their industry, what does good positioning look like? Name competitors with strong positioning as benchmarks.
-4. **Concrete recommendations** — 3 specific actions with timelines (e.g., "Hire a COO within 60 days", "Document top 5 business processes into SOPs by end of Q2")
+**For early-stage companies:**
+- Phase 1: 夯实基础 (Fix the Base) — fix founder dependency, build SOPs, stabilize revenue model
+- Phase 2: 可复制化 (Make Replicable) — prove the model works without the founder, expand to new segments
+- Phase 3: 进入资本通道 (Enter Capital Path) — prepare for fundraising, build investor narrative
 
+**For mid-stage companies:**
+- Phase 1: 巩固单位经济 (Solidify Unit Economics) — prove profitability per unit, optimize margins
+- Phase 2: 搭建资本叙事 (Build Capital Narrative) — create a compelling story, benchmark against listed peers
+- Phase 3: 启动融资 (Launch Financing) — execute fundraising, target specific investor types
+
+**For advanced companies:**
+- Phase 1: 上市前体检 (Pre-IPO Health Check) — audit readiness, governance, compliance
+- Phase 2: 升级叙事 (Upgrade Narrative) — position for IPO valuation, international benchmarking
+- Phase 3: 进入Pre-IPO (Enter Pre-IPO) — engage sponsors, roadshow preparation
+
+Each phase must include: phase name, objective, and 2-3 SPECIFIC actions.
 400-500 words in Chinese, 150-200 in English.""",
 
-        "business_model": """Analyze the business model structure — can this business scale beyond the founder?
+        "action_plan_90d": """Provide a focused 90-day action plan with THREE time horizons. Each action MUST be specific and tied to a bottleneck identified in the assessment.
 
-1. **Revenue model assessment** — what type of revenue model do they have? How does it compare to industry best practices? What's the typical revenue profile for successful companies in this sector? Use web research data.
-2. **Replicability score deep-dive** — if they tried to replicate to a new city/market, what would fail? Be specific about which processes are missing SOPs.
-3. **Customer economics** — analyze retention vs acquisition. What does the customer journey look like? What's the industry benchmark for retention in their sector?
-4. **Channel risk** — how dependent are they on specific acquisition channels? What happens if that channel's economics change?
-5. **Recommendations** — specific, measurable actions (e.g., "Build a 3-stage sales playbook", "Achieve 85% customer retention rate within 6 months")
+**本周 (This Week):**
+- 1-2 immediate actions the founder can start TODAY
+- These should address the single most urgent issue
+- Example: "梳理现有客户清单，标注哪些客户是老板独立维护、哪些已有团队跟进"
 
-500-600 words in Chinese, 200-250 in English.""",
+**本月 (This Month):**
+- 2-3 actions to complete within 30 days
+- Focus on quick wins that build momentum
+- Each must have a measurable deliverable
 
-        "growth_valuation": """Analyze growth trajectory and valuation potential.
+**90天内 (Within 90 Days):**
+- 2-3 actions for the quarter
+- Focus on structural changes (team, process, systems)
+- Each must have a clear success metric
 
-1. **Growth strategy critique** — is their chosen growth path (from answers) the RIGHT one for their industry? What do successful peers do? Reference specific companies from web research.
-2. **TAM/SAM/SOM analysis** — use web research data to estimate market sizes. What's the realistic addressable market? Is their current market focus (local/regional/global) appropriate?
-3. **Valuation logic** — what valuation methodology applies? (PS ratio, ARR multiple, etc.) What are typical multiples for their industry in SEA? Give a rough valuation range based on current and projected metrics.
-4. **Growth unlock conditions** — what specific changes would move them from linear to exponential growth? Be concrete.
+IMPORTANT: Every action must be SPECIFIC and ACTIONABLE. Bad: "优化运营". Good: "完成5个核心业务流程的SOP文档化，并培训至少2名员工独立执行".
+300-400 words in Chinese, 100-150 in English.""",
 
-400-500 words in Chinese, 150-200 in English.""",
+        "upgrade_assessment": """Provide FOUR upgrade verdicts. Each verdict must have a rating AND a one-line explanation.
 
-        "financing_readiness": """Analyze financing and capital readiness.
+### 高估值潜力 (High Valuation Potential)
+Rating: **低 / 初显 / 强** (Low / Emerging / Strong)
+One-line explanation of why.
 
-1. **Readiness vs reality** — if their financing readiness score is high but business maturity is low, explain this mismatch and its implications. Should they raise now or wait?
-2. **Equity structure review** — is the structure investor-friendly? Common issues to check: founder control %, ESOP pool, investor protections.
-3. **Audit & financial infrastructure** — how does their financial maturity compare to peers at this stage? What do investors actually look for?
-4. **Fundraising strategy** — specific recommendation on timing, round type, target amount, and use of funds. Reference typical round sizes for their stage/industry in Malaysia/SEA.
-5. **Risk warning** — what could go wrong if they raise too early? Be honest.
+### 融资准备度 (Financing Readiness)
+Rating: **尚未准备 / 可启动准备 / 可进入实操** (Not Ready / Can Start Prep / Ready for Action)
+One-line explanation of why.
 
-400-500 words in Chinese, 150-200 in English.""",
+### BP准备度 (Business Plan Readiness)
+Rating: **需先补基础 / 可进入BP阶段 / 已进入进阶阶段** (Supplement Basics First / Can Enter BP Stage / Advanced Stage)
+One-line explanation of why.
 
-        "exit_listing": """Analyze exit strategy and listing readiness.
+### 上市成熟度 (Listing Maturity)
+Rating: **尚远 / 中期方向 / 接近Pre-IPO** (Far Away / Mid-term Direction / Pre-IPO Period)
+One-line explanation of why.
 
-1. **Exit path analysis** — evaluate the feasibility of their stated preference. If there are contradictions (e.g., "no exit" but "want IPO"), address them directly.
-2. **Listing requirements checklist** — for Bursa Malaysia (ACE Market or Main Market), list specific requirements and mark which are met ✅ and which are not ❌. Include: audit history, revenue/profit thresholds, public shareholding %, independent directors, sponsor requirements.
-3. **Timeline estimation** — realistic year-by-year roadmap to listing readiness
-4. **Alternative paths** — if IPO is too far, what are realistic alternatives? (M&A, strategic sale, secondary sale)
+Be honest in your ratings — most early-stage companies will be "Low" or "Not Ready" in most categories. Do not inflate ratings to be polite.
+200-300 words in Chinese, 80-120 in English.""",
 
-300-400 words in Chinese, 150-200 in English.""",
+        "next_steps": """Recommend what IIFLE should offer this company as next steps. Adapt to the company's stage:
 
-        "growth_pathway": """This is the MOST IMPORTANT section. Provide a comprehensive "做大做强" growth roadmap.
+**For early-stage companies, recommend:**
+- 商业模式梳理 (Business Model Structuring) — why they need it
+- SOP搭建 (SOP Development) — which processes to prioritize
+- 基础财务/股权整理 (Basic Finance & Equity Cleanup) — what needs fixing
 
-Structure as THREE PHASES with SPECIFIC deliverables:
+**For mid-stage companies, recommend:**
+- BP梳理 (Business Plan Development) — what story to tell
+- 资本故事设计 (Capital Narrative Design) — how to position for investors
+- 对接匹配资本 (Capital Matching) — what type of investors to target
 
-**Phase 1: Foundation (0-6 months)**
-- List 4-5 specific actions with measurable targets
-- Focus on fixing the biggest bottleneck identified in the diagnostic
-- Include team, process, and product actions
+**For advanced companies, recommend:**
+- 上市前体检 (Pre-IPO Health Check) — what gaps to close
+- 资本故事重塑 (Capital Narrative Reshaping) — how to upgrade the story
+- 顾问团队搭建 (Advisory Team Building) — what expertise to bring in
 
-**Phase 2: Validation & Scale (6-18 months)**
-- List 4-5 specific actions
-- Focus on proving replicability and achieving revenue milestones
-- Include market expansion and fundraising timing
-
-**Phase 3: Capital Acceleration (18-36 months)**
-- List 3-4 specific actions
-- Focus on fundraising, market expansion, and IPO preparation
-
-For each action, provide: WHAT to do, WHY it matters, and a MEASURABLE target.
-Use industry benchmarks and real company examples to justify recommendations.
-
-600-800 words in Chinese, 250-300 in English.""",
-
-        "action_items": """Provide a prioritized action plan. Structure:
-
-**URGENT — 30天内 (30 days)**
-- 3 specific actions, each with: what, who is responsible, measurable outcome
-- These should address the #1 bottleneck identified
-
-**IMPORTANT — 90天内 (90 days)**
-- 4 specific actions with measurable outcomes
-- Focus on team building and process standardization
-
-**STRATEGIC — 6个月内 (6 months)**
-- 3 specific actions with measurable outcomes
-- Focus on market positioning and capital preparation
-
-Each action item must be SPECIFIC and MEASURABLE. Bad: "improve operations". Good: "Complete SOP documentation for 5 core processes, train 2 new team members to execute independently, achieve 80% process compliance rate."
-
-400-500 words in Chinese, 200-250 in English.""",
+For each recommendation, explain: WHY this company needs it, WHAT it involves, and WHAT outcome to expect.
+End with a clear call-to-action for the company to engage with IIFLE.
+200-300 words in Chinese, 80-120 in English.""",
     }
     return prompts.get(section_key, "Provide analysis for this section based on the diagnostic data.")
 
@@ -301,6 +329,18 @@ async def generate_diagnostic_report(
     ai_client = get_ai_client()
 
     system_prompt = """You are a senior capital structure consultant at IIFLE, a Malaysian capital advisory firm. You are writing a professional enterprise diagnostic report for a business owner.
+
+You are generating ONE SECTION of an 8-section diagnostic report:
+1. 企业画像与阶段判断 — Enterprise Profile & Stage Assessment
+2. 关键勾选摘要 — Key Questionnaire Highlights
+3. 六大结构评分 — Six Structure Scores
+4. AI总判断 — AI Overall Assessment
+5. 独角兽路径图 — Unicorn Pathway
+6. 90天行动建议 — 90-Day Action Plan
+7. 升级判断 — Upgrade Assessment
+8. 建议承接方向 — Recommended Next Steps
+
+Write like the sample diagnostic reports: direct, specific, consultant-style. Each section has a clear purpose — stay focused on that section's role. Do NOT repeat content across sections.
 
 CRITICAL RULES — follow these exactly:
 
