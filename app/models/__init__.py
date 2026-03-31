@@ -6,6 +6,7 @@ from app.models.research import CompanyResearch, ResearchStatus
 from app.models.assessment import Assessment, AssessmentStatus, CapitalReadiness, ModuleScore, DimensionScore, AutoFlag, FlagSeverity
 from app.models.report import Report, ReportSection, ReportType, ReportStatus, ReportLanguage
 from app.models.chat import ChatConversation, ChatMessage, ContextType, MessageRole
+from app.models.diagnostic import Diagnostic, DiagnosticStatus
 
 __all__ = [
     "User",
@@ -37,4 +38,6 @@ __all__ = [
     "ChatMessage",
     "ContextType",
     "MessageRole",
+    "Diagnostic",
+    "DiagnosticStatus",
 ]

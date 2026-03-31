@@ -67,7 +67,7 @@ async def trigger_research(
         from app.services.ai.research import ResearchService
         async with async_session_factory() as session:
             service = ResearchService(session)
-            await service.run_full_research(cid)
+            await service.run_full_research(cid, force=True)
             await session.commit()
 
     background_tasks.add_task(_run, company_id)

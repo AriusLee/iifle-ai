@@ -27,7 +27,7 @@ class ResearchService:
         self._db = db
         self._client = get_ai_client()
 
-    async def run_full_research(self, company_id: uuid.UUID) -> CompanyResearch:
+    async def run_full_research(self, company_id: uuid.UUID, force: bool = False) -> CompanyResearch:
         """Run full DD research for a company. Creates/updates CompanyResearch record."""
 
         # Get company info
@@ -36,7 +36,7 @@ class ResearchService:
         if not company:
             raise ValueError(f"Company {company_id} not found")
 
-        # Check for existing recent research (skip if < 7 days old)
+        # Check for existing recent research (skip if < 7 days old, unless forced)
         existing = await self._db.execute(
             select(CompanyResearch)
             .where(CompanyResearch.company_id == company_id)
@@ -44,7 +44,7 @@ class ResearchService:
             .limit(1)
         )
         recent = existing.scalar_one_or_none()
-        if recent and recent.status == "completed" and recent.research_date:
+        if not force and recent and recent.status == "completed" and recent.research_date:
             age = datetime.now(timezone.utc) - recent.research_date.replace(tzinfo=timezone.utc)
             if age < timedelta(days=7):
                 logger.info("Skipping research for %s — recent results exist", company.legal_name)
@@ -74,19 +74,23 @@ class ResearchService:
         }
 
         try:
-            # Run three research queries in sequence (to stay within rate limits)
+            # Run four research queries
             company_data = await self._research_company(company_context)
+            people_data = await self._research_people(company_context)
             industry_data = await self._research_industry(company_context)
             peer_data = await self._research_peers(company_context)
+
+            # Merge people data into company_data
+            if people_data:
+                company_data["key_people"] = people_data.get("key_people", {})
+                company_data["leadership"] = people_data.get("leadership", "")
+                company_data["founders"] = people_data.get("founders", "")
+                company_data["board"] = people_data.get("board", "")
 
             research.company_data = company_data
             research.industry_data = industry_data
             research.peer_data = peer_data
-            research.sources = (
-                company_data.get("sources", [])
-                + industry_data.get("sources", [])
-                + peer_data.get("sources", [])
-            )
+            research.sources = []  # Don't expose raw source URLs
             research.status = "completed"
             research.research_date = datetime.now(timezone.utc)
             research.expires_at = datetime.now(timezone.utc) + timedelta(days=30)
@@ -100,37 +104,77 @@ class ResearchService:
         return research
 
     async def _research_company(self, ctx: dict) -> dict:
-        """Research the company itself: news, reputation, key people."""
+        """Research the company: profile, news, reputation, products."""
         try:
             result = await self._client.research_web(
-                query=f"{ctx['name']} company news financials reputation {ctx['country']}",
+                query=f'"{ctx["name"]}" company profile products services news {ctx["country"]}',
                 company_context=ctx,
             )
             return result if isinstance(result, dict) else {"raw": str(result)}
         except Exception as exc:
             logger.warning("Company research failed: %s", exc)
-            return {"error": str(exc), "sources": []}
+            return {"error": str(exc)}
+
+    async def _research_people(self, ctx: dict) -> dict:
+        """Research key people: founders, CEO, directors, shareholders."""
+        from app.services.ai.web_search import get_web_search
+
+        web_search = get_web_search()
+        web_context = ""
+        if web_search:
+            try:
+                results = await web_search.search(
+                    f'"{ctx["name"]}" founder CEO director shareholders team {ctx["country"]}',
+                    max_results=5,
+                )
+                web_context = "\n\n".join(
+                    f"### {r['title']}\n{r['content']}" for r in results if r.get("content")
+                )
+            except Exception as exc:
+                logger.warning("Tavily people search failed: %s", exc)
+
+        system_prompt = (
+            "You are a research analyst. Extract information about the company's key people. "
+            "Respond with ONLY a valid JSON object:\n"
+            '{"key_people": {"founders": "<string describing founders>", "ceo": "<string>", '
+            '"directors": "<string listing directors>", "shareholders": "<string listing major shareholders>"}, '
+            '"leadership": "<paragraph about leadership team>", '
+            '"founders": "<paragraph about founders background>", '
+            '"board": "<paragraph about board of directors>"}'
+        )
+
+        user_content = f"Company: {ctx['name']}\nIndustry: {ctx['industry']}\nCountry: {ctx['country']}\n"
+        if web_context:
+            user_content += f"\nWeb search results:\n{web_context}\n"
+        user_content += "\nExtract key people information. Return JSON only."
+
+        try:
+            result = await self._client._chat(system_prompt, user_content, 0.2)
+            return self._client._parse_json(result, default={})
+        except Exception as exc:
+            logger.warning("People research failed: %s", exc)
+            return {}
 
     async def _research_industry(self, ctx: dict) -> dict:
-        """Research the industry: TAM, trends, PESTEL, regulations."""
+        """Research the industry: TAM, trends, regulations."""
         try:
             result = await self._client.research_web(
-                query=f"{ctx['industry']} industry market size trends {ctx['country']} 2025 2026",
+                query=f"{ctx['industry']} industry market size growth rate trends {ctx['country']} Southeast Asia 2025 2026",
                 company_context=ctx,
             )
             return result if isinstance(result, dict) else {"raw": str(result)}
         except Exception as exc:
             logger.warning("Industry research failed: %s", exc)
-            return {"error": str(exc), "sources": []}
+            return {"error": str(exc)}
 
     async def _research_peers(self, ctx: dict) -> dict:
         """Research comparable companies and competitors."""
         try:
             result = await self._client.research_web(
-                query=f"{ctx['industry']} top companies competitors {ctx['country']} listed comparable {ctx.get('sub_industry', '')}",
+                query=f"{ctx['industry']} top companies competitors market leaders {ctx['country']} listed companies",
                 company_context=ctx,
             )
             return result if isinstance(result, dict) else {"raw": str(result)}
         except Exception as exc:
             logger.warning("Peer research failed: %s", exc)
-            return {"error": str(exc), "sources": []}
+            return {"error": str(exc)}

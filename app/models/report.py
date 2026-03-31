@@ -17,6 +17,7 @@ class ReportType(str, enum.Enum):
     module_5 = "module_5"
     module_6 = "module_6"
     master = "master"
+    diagnostic = "diagnostic"
 
 
 class ReportStatus(str, enum.Enum):
@@ -38,7 +39,7 @@ class Report(Base):
     __tablename__ = "reports"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    assessment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("assessments.id", ondelete="CASCADE"), nullable=False)
+    assessment_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("assessments.id", ondelete="CASCADE"), nullable=True)
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
     report_type: Mapped[ReportType] = mapped_column(Enum(ReportType), nullable=False)
     title: Mapped[str] = mapped_column(String(500), nullable=False)

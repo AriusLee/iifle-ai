@@ -24,7 +24,9 @@ class Settings(BaseSettings):
     JWT_EXPIRY_HOURS: int = 24
 
     GROQ_API_KEY: str = ""
-    AI_PROVIDER: str = "groq"
+    DEEPSEEK_API_KEY: str = ""
+    TAVILY_API_KEY: str = ""
+    AI_PROVIDER: str = "groq"  # "groq" (free, Qwen3) or "deepseek" (production)
 
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"
 

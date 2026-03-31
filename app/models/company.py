@@ -33,3 +33,4 @@ class Company(Base):
     assessments: Mapped[list["Assessment"]] = relationship(back_populates="company")
     reports: Mapped[list["Report"]] = relationship(back_populates="company")
     conversations: Mapped[list["ChatConversation"]] = relationship(back_populates="company")
+    diagnostics: Mapped[list["Diagnostic"]] = relationship(back_populates="company")

@@ -1,33 +1,36 @@
 """
-Groq API client — uses Qwen3-32B for excellent bilingual Chinese/English output.
+DeepSeek API client — production AI provider with excellent Chinese quality.
+Uses OpenAI-compatible API format. No rate limits.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from typing import Any
 
-from groq import AsyncGroq
+from openai import AsyncOpenAI
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-GROQ_MODEL = "qwen/qwen3-32b"  # Alibaba Qwen3 — excellent Chinese + English
-GROQ_CHAT_MODEL = "qwen/qwen3-32b"  # Same model for chat (good balance of speed + quality)
+DEEPSEEK_MODEL = "deepseek-chat"  # V3 — fast, general purpose
+DEEPSEEK_REASONER = "deepseek-reasoner"  # V3 thinking mode — better for analysis
 
 
-class GroqClient:
-    """Groq-backed AI client."""
+class DeepSeekClient:
+    """DeepSeek-backed AI client using OpenAI-compatible API."""
 
     def __init__(self, api_key: str | None = None) -> None:
-        resolved_key = api_key or settings.GROQ_API_KEY
+        resolved_key = api_key or settings.DEEPSEEK_API_KEY
         if not resolved_key:
-            raise ValueError("GROQ_API_KEY must be set.")
-        self._client = AsyncGroq(api_key=resolved_key)
-        self._semaphore = asyncio.Semaphore(1)  # Groq free tier: 12K TPM, serialize calls
+            raise ValueError("DEEPSEEK_API_KEY must be set.")
+        self._client = AsyncOpenAI(
+            api_key=resolved_key,
+            base_url="https://api.deepseek.com",
+        )
+        # No semaphore needed — DeepSeek has no rate limits
 
     async def score_dimension(
         self,
@@ -36,7 +39,7 @@ class GroqClient:
         input_data: dict[str, Any],
         few_shot_examples: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """Score a dimension — returns {"score": int, "reasoning": str, "sub_scores": dict}."""
+        """Score a dimension using reasoning model for better analysis."""
         system_prompt = (
             "You are an expert capital-market analyst for IIFLE, a Malaysian "
             "capital structure advisory platform. You evaluate companies on specific "
@@ -55,7 +58,8 @@ class GroqClient:
             user_content += f"## Calibration Examples:\n{json.dumps(few_shot_examples, indent=2, default=str)}\n\n"
         user_content += "Score this dimension. Return ONLY valid JSON."
 
-        result = await self._chat(system_prompt, user_content, temperature=0.1)
+        # Use reasoner for scoring — better analytical depth
+        result = await self._chat(system_prompt, user_content, temperature=0.1, model=DEEPSEEK_REASONER)
         return self._parse_json(result, default={"score": 50, "reasoning": "Could not parse response", "sub_scores": {}})
 
     async def generate_narrative(
@@ -69,14 +73,15 @@ class GroqClient:
             "Write in English."
             if language == "en"
             else (
-                "Write in Mandarin Chinese."
+                "Write in Mandarin Chinese (简体中文)."
                 if language == "zh"
-                else "Write in both English and Mandarin Chinese, clearly separated."
+                else "Write in both Mandarin Chinese (简体中文) and English, clearly separated with ## 中文 and ## English headers."
             )
         )
 
         system_prompt = (
-            "You are a professional financial report writer for IIFLE. "
+            "You are a professional financial report writer for IIFLE, "
+            "a capital structure advisory platform based in Malaysia. "
             "Write clear, concise, and insightful narratives suitable for "
             "investor and board-level audiences. " + lang_instruction
         )
@@ -86,7 +91,8 @@ class GroqClient:
             f"Context and scoring data:\n{json.dumps(context, indent=2, default=str)}"
         )
 
-        return await self._chat(system_prompt, user_content, temperature=0.4)
+        # Use chat model for narratives — faster
+        return await self._chat(system_prompt, user_content, temperature=0.4, model=DEEPSEEK_MODEL)
 
     async def research_web(
         self,
@@ -96,7 +102,6 @@ class GroqClient:
         """Research using Tavily web search + AI analysis."""
         from app.services.ai.web_search import get_web_search
 
-        # Try Tavily first for real web data
         web_context = ""
         sources = []
         web_search = get_web_search()
@@ -107,9 +112,8 @@ class GroqClient:
                 research = await web_search.research_company(company_name, industry)
                 web_context = research.get("search_context", "")
                 sources = research.get("sources", [])
-                logger.info("Tavily returned %d results for '%s'", research.get("result_count", 0), company_name)
             except Exception as exc:
-                logger.warning("Tavily research failed, falling back to model knowledge: %s", exc)
+                logger.warning("Tavily research failed: %s", exc)
 
         system_prompt = (
             "You are a research analyst. Analyze the provided web search results and your own knowledge "
@@ -139,7 +143,7 @@ class GroqClient:
         user_content: str,
         temperature: float = 0.1,
     ) -> dict[str, Any]:
-        """Generic structured data extraction — returns parsed JSON."""
+        """Generic structured data extraction."""
         result = await self._chat(system_prompt, user_content, temperature=temperature)
         return self._parse_json(result, default={})
 
@@ -153,78 +157,56 @@ class GroqClient:
         messages: list[dict[str, str]],
         temperature: float = 0.3,
     ):
-        """Stream a chat response — filters out <think> blocks from Qwen3."""
-        async with self._semaphore:
-            stream = await self._client.chat.completions.create(
-                model=GROQ_CHAT_MODEL,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    *messages,
-                ],
-                temperature=temperature,
-                max_tokens=4096,
-                stream=True,
-            )
-            in_think = False
-            async for chunk in stream:
-                delta = chunk.choices[0].delta
-                if delta.content:
-                    text = delta.content
-                    if "<think>" in text:
-                        in_think = True
-                        continue
-                    if "</think>" in text:
-                        in_think = False
-                        continue
-                    if not in_think:
-                        yield text
+        """Stream a chat response."""
+        stream = await self._client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                *messages,
+            ],
+            temperature=temperature,
+            max_tokens=4096,
+            stream=True,
+        )
+        async for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
-    async def _chat(self, system: str, user_content: str, temperature: float) -> str:
-        """Simple chat completion with rate limit retry."""
-        for attempt in range(4):
-            try:
-                async with self._semaphore:
-                    response = await self._client.chat.completions.create(
-                        model=GROQ_MODEL,
-                        messages=[
-                            {"role": "system", "content": system},
-                            {"role": "user", "content": user_content},
-                        ],
-                        temperature=temperature,
-                        max_tokens=4096,
-                    )
-                    await asyncio.sleep(2)
-                    content = response.choices[0].message.content or ""
-                    return self._strip_thinking(content)
-            except Exception as exc:
-                if "429" in str(exc) or "rate_limit" in str(exc):
-                    wait = 20 * (attempt + 1)
-                    logger.warning("Groq rate limited, waiting %ds (attempt %d/4)", wait, attempt + 1)
-                    await asyncio.sleep(wait)
-                else:
-                    raise
-        return ""
-
-    @staticmethod
-    def _strip_thinking(text: str) -> str:
-        """Strip <think>...</think> blocks from Qwen3 responses."""
-        import re
-        return re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL).strip()
+    async def _chat(
+        self,
+        system: str,
+        user_content: str,
+        temperature: float,
+        model: str = DEEPSEEK_MODEL,
+    ) -> str:
+        """Chat completion — no rate limit handling needed."""
+        try:
+            response = await self._client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_content},
+                ],
+                temperature=temperature,
+                max_tokens=4096,
+            )
+            return response.choices[0].message.content or ""
+        except Exception as exc:
+            logger.error("DeepSeek API error: %s", exc)
+            raise
 
     @staticmethod
     def _parse_json(text: str, default: dict) -> dict:
         """Extract JSON from a text response (handles markdown code blocks)."""
-        # Try direct parse
         try:
             return json.loads(text)
         except json.JSONDecodeError:
             pass
 
-        # Try extracting from ```json ... ``` blocks
         if "```" in text:
             try:
                 start = text.index("```") + 3
@@ -235,7 +217,6 @@ class GroqClient:
             except (ValueError, json.JSONDecodeError):
                 pass
 
-        # Try finding first { ... } block
         try:
             start = text.index("{")
             end = text.rindex("}") + 1
