@@ -48,36 +48,16 @@ def _render_html(
     status_label = report.status.value.title() if report.status else "Draft"
 
     # Build sections HTML
+    import markdown as md
+
     sections_html = ""
     for section in sorted(sections, key=lambda s: s.sort_order):
         content = section.content_cn if language == "cn" and section.content_cn else section.content_en
         if not content:
             continue
 
-        # Convert plain text to HTML paragraphs
-        paragraphs = content.strip().split("\n\n")
-        content_html = ""
-        for para in paragraphs:
-            lines = para.strip().split("\n")
-            formatted_lines = []
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                if line.startswith("•") or line.startswith("-"):
-                    formatted_lines.append(f"<li>{_escape(line.lstrip('•- '))}</li>")
-                elif line.startswith("✅") or line.startswith("✓"):
-                    formatted_lines.append(f"<li class='check'>{_escape(line.lstrip('✅✓ '))}</li>")
-                else:
-                    formatted_lines.append(f"<p>{_escape(line)}</p>")
-
-            if any("<li" in l for l in formatted_lines):
-                list_items = [l for l in formatted_lines if "<li" in l]
-                non_list = [l for l in formatted_lines if "<li" not in l]
-                content_html += "".join(non_list)
-                content_html += "<ul>" + "".join(list_items) + "</ul>"
-            else:
-                content_html += "".join(formatted_lines)
+        # Convert markdown to HTML
+        content_html = md.markdown(content, extensions=["tables", "sane_lists"])
 
         sections_html += f"""
         <div class="section">
@@ -193,12 +173,26 @@ def _render_html(
             border-bottom: 2px solid #e2e8f0;
         }}
 
+        h3 {{
+            font-size: 13px;
+            font-weight: 700;
+            color: #1e293b;
+            margin: 16px 0 8px 0;
+        }}
+
+        h4 {{
+            font-size: 11px;
+            font-weight: 700;
+            color: #334155;
+            margin: 12px 0 6px 0;
+        }}
+
         p {{
             margin-bottom: 8px;
             text-align: justify;
         }}
 
-        ul {{
+        ul, ol {{
             margin: 8px 0 12px 20px;
             padding: 0;
         }}
@@ -207,20 +201,46 @@ def _render_html(
             margin-bottom: 4px;
         }}
 
-        li.check {{
-            list-style: none;
-            margin-left: -20px;
-            padding-left: 20px;
-        }}
-
-        li.check::before {{
-            content: "✓ ";
-            color: #10b981;
+        strong {{
             font-weight: 700;
         }}
 
-        strong {{
-            font-weight: 600;
+        em {{
+            font-style: italic;
+        }}
+
+        blockquote {{
+            border-left: 3px solid #3b82f6;
+            padding: 8px 12px;
+            margin: 8px 0;
+            background: #f8fafc;
+            color: #475569;
+        }}
+
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 12px 0;
+            font-size: 10px;
+        }}
+
+        th {{
+            background: #f1f5f9;
+            border: 1px solid #e2e8f0;
+            padding: 6px 10px;
+            text-align: left;
+            font-weight: 700;
+        }}
+
+        td {{
+            border: 1px solid #e2e8f0;
+            padding: 6px 10px;
+        }}
+
+        hr {{
+            border: none;
+            border-top: 1px solid #e2e8f0;
+            margin: 16px 0;
         }}
 
         /* Footer */
