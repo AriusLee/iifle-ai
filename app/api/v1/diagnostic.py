@@ -155,25 +155,8 @@ async def list_diagnostics(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all diagnostics (advisor sees all, client sees own)."""
-    from sqlalchemy import select
-    from app.models.user import UserRole, RoleType
-
-    # Check if user is admin/advisor
-    role_result = await db.execute(
-        select(UserRole).where(
-            UserRole.user_id == current_user.id,
-            UserRole.role.in_([RoleType.admin, RoleType.advisor]),
-        )
-    )
-    is_advisor = role_result.first() is not None
-
-    if is_advisor:
-        diagnostics = await diagnostic_service.list_all_diagnostics(db)
-    else:
-        diagnostics = await diagnostic_service.list_diagnostics(
-            db, user_id=current_user.id
-        )
+    """List all diagnostics — all logged-in users see everything."""
+    diagnostics = await diagnostic_service.list_all_diagnostics(db)
 
     # Fetch company names
     results = []
