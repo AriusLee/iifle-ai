@@ -2,7 +2,8 @@ import asyncio
 import logging
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -88,3 +89,27 @@ async def update_company_endpoint(
 ):
     company = await update_company(db, company_id, data, current_user.id)
     return company
+
+
+@router.delete("/{company_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_company_endpoint(
+    company_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.models.company import Company
+    result = await db.execute(select(Company).where(Company.id == company_id))
+    company = result.scalar_one_or_none()
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    # Delete all related records via raw SQL CASCADE
+    from sqlalchemy import text
+    await db.execute(text("DELETE FROM diagnostics WHERE company_id = :cid"), {"cid": company_id})
+    await db.execute(text("DELETE FROM reports WHERE company_id = :cid"), {"cid": company_id})
+    await db.execute(text("DELETE FROM company_research WHERE company_id = :cid"), {"cid": company_id})
+    await db.execute(text("DELETE FROM documents WHERE company_id = :cid"), {"cid": company_id})
+    await db.execute(text("DELETE FROM intake_stages WHERE company_id = :cid"), {"cid": company_id})
+    await db.execute(text("DELETE FROM assessments WHERE company_id = :cid"), {"cid": company_id})
+    await db.execute(text("DELETE FROM auto_flags WHERE company_id = :cid"), {"cid": company_id})
+    await db.execute(text("DELETE FROM chat_conversations WHERE company_id = :cid"), {"cid": company_id})
+    await db.execute(text("DELETE FROM companies WHERE id = :cid"), {"cid": company_id})
