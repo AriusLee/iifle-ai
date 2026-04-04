@@ -49,36 +49,11 @@ async def get_current_user(
 
 
 def require_role(roles: list[str]) -> Callable:
+    """Role check disabled — all authenticated users have full access."""
     async def role_checker(
         company_id: uuid.UUID,
         current_user: User = Depends(get_current_user),
-        db: AsyncSession = Depends(get_db),
     ) -> User:
-        # Check for global admin role
-        admin_result = await db.execute(
-            select(UserRole).where(
-                UserRole.user_id == current_user.id,
-                UserRole.role == RoleType.admin,
-                UserRole.company_id.is_(None),
-            )
-        )
-        if admin_result.scalar_one_or_none():
-            return current_user
-
-        # Check for company-specific role
-        role_enums = [RoleType(r) for r in roles]
-        result = await db.execute(
-            select(UserRole).where(
-                UserRole.user_id == current_user.id,
-                UserRole.company_id == company_id,
-                UserRole.role.in_(role_enums),
-            )
-        )
-        if not result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Insufficient permissions for this company",
-            )
         return current_user
 
     return role_checker
