@@ -222,6 +222,22 @@ async def list_reports(
     return [_report_to_response(r) for r in reports]
 
 
+@router.delete(
+    "/{report_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a report",
+)
+async def delete_report(
+    company_id: uuid.UUID,
+    report_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(["admin", "advisor"])),
+):
+    """Delete a report and all its sections."""
+    report = await _get_report_or_404(report_id, company_id, db)
+    await db.delete(report)
+
+
 @router.get(
     "/{report_id}",
     response_model=ReportDetailResponse,
@@ -260,15 +276,19 @@ async def export_report_pdf(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
-    # Build filename
+    # Build filename — use ASCII-safe fallback + UTF-8 filename* for Chinese support
     report = await _get_report_or_404(report_id, company_id, db)
-    safe_title = (report.title or "report").replace(" ", "_").lower()
-    filename = f"{safe_title}_v{report.version}.pdf"
+    from urllib.parse import quote
+    title = report.title or "report"
+    filename_ascii = f"report_v{report.version}.pdf"
+    filename_utf8 = quote(f"{title}_v{report.version}.pdf")
 
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f"attachment; filename=\"{filename_ascii}\"; filename*=UTF-8''{filename_utf8}"
+        },
     )
 
 

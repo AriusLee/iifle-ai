@@ -48,6 +48,11 @@ class ModuleScoreOut(BaseModel):
     rating: str
 
 
+class SectionSubmitRequest(BaseModel):
+    answers: dict
+    other_answers: dict = Field(default_factory=dict)
+
+
 class DiagnosticOut(BaseModel):
     id: uuid.UUID
     company_id: uuid.UUID
@@ -61,6 +66,9 @@ class DiagnosticOut(BaseModel):
     capital_readiness: str | None = None
     module_scores: dict | None = None
     key_findings: list | None = None
+    sections_submitted: list[str] | None = None
+    stage_score: float | None = None
+    section_analyses: dict | None = None
     report_id: uuid.UUID | None = None
     progress_message: str | None = None
     error_message: str | None = None
@@ -70,6 +78,19 @@ class DiagnosticOut(BaseModel):
 
 
 def _diagnostic_to_out(d: Diagnostic, company_name: str | None = None) -> DiagnosticOut:
+    # Extract sections_submitted and stage_score from _meta, strip _meta from module_scores output
+    module_scores = d.module_scores
+    sections_submitted = None
+    stage_score = None
+    section_analyses = None
+    if module_scores and "_meta" in module_scores:
+        meta = module_scores["_meta"]
+        sections_submitted = meta.get("sections_submitted", [])
+        stage_score = meta.get("stage_score")
+        section_analyses = meta.get("section_analyses")
+        # Return module_scores without _meta key
+        module_scores = {k: v for k, v in module_scores.items() if k != "_meta"}
+
     return DiagnosticOut(
         id=d.id,
         company_id=d.company_id,
@@ -81,8 +102,11 @@ def _diagnostic_to_out(d: Diagnostic, company_name: str | None = None) -> Diagno
         overall_rating=d.overall_rating,
         enterprise_stage=d.enterprise_stage,
         capital_readiness=d.capital_readiness,
-        module_scores=d.module_scores,
+        module_scores=module_scores if module_scores else None,
         key_findings=d.key_findings,
+        sections_submitted=sections_submitted,
+        stage_score=stage_score,
+        section_analyses=section_analyses,
         report_id=d.report_id,
         progress_message=d.progress_message,
         error_message=d.error_message,
@@ -198,6 +222,38 @@ async def save_draft(
         other_answers=body.other_answers,
     )
     return _diagnostic_to_out(diagnostic)
+
+
+@router.post("/{diagnostic_id}/sections/{section_key}/submit", response_model=DiagnosticOut)
+async def submit_section(
+    diagnostic_id: uuid.UUID,
+    section_key: str,
+    body: SectionSubmitRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Submit and score a single section of the questionnaire."""
+    if section_key not in ("a", "b", "c", "d", "e", "f"):
+        raise HTTPException(status_code=400, detail=f"Invalid section: {section_key}")
+
+    try:
+        diagnostic = await diagnostic_service.submit_section(
+            db=db,
+            diagnostic_id=diagnostic_id,
+            section_key=section_key,
+            answers=body.answers,
+            other_answers=body.other_answers,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    from sqlalchemy import select
+    company_result = await db.execute(
+        select(Company.legal_name).where(Company.id == diagnostic.company_id)
+    )
+    company_name = company_result.scalar_one_or_none()
+
+    return _diagnostic_to_out(diagnostic, company_name)
 
 
 @router.post("/{diagnostic_id}/submit", response_model=DiagnosticOut)

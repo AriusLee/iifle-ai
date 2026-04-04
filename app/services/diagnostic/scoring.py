@@ -687,3 +687,273 @@ def _detect_findings(
         })
 
     return findings
+
+
+# ── Section-to-module mapping ───────────────────────────────────────────────
+
+SECTION_MODULE_MAP: dict[str, list[int]] = {
+    "a": [],          # Stage classification only, no module
+    "b": [1],         # Gene Structure
+    "c": [2],         # Business Model
+    "d": [3],         # Valuation
+    "e": [4],         # Financing
+    "f": [5, 6],      # Exit + Listing (Module 6 uses shared questions)
+}
+
+# Which questions belong to each section
+SECTION_QUESTIONS: dict[str, list[str]] = {
+    "a": ["Q01", "Q02", "Q03", "Q04", "Q05", "Q06", "Q07", "Q08"],
+    "b": ["Q09", "Q10", "Q11", "Q12", "Q13"],
+    "c": ["Q14", "Q15", "Q16", "Q17", "Q18", "Q19", "Q20"],
+    "d": ["Q21", "Q22", "Q23", "Q24", "Q25"],
+    "e": ["Q26", "Q27", "Q28", "Q29", "Q30", "Q31", "Q32"],
+    "f": ["Q33", "Q34", "Q35"],
+}
+
+# Findings are assigned to sections based on which section's questions they primarily depend on
+_FINDING_SECTIONS: dict[str, list[str]] = {
+    # Section B findings (depend on Q09-Q13)
+    "b": ["founder_dependency", "low_replicability"],
+    # Section C findings (depend on Q14-Q20, plus cross-check with B)
+    "c": ["revenue_model_risk", "growth_validation"],
+    # Section D findings (depend on Q21-Q25)
+    "d": ["financial_gap", "equity_gap"],
+    # Section E findings (depend on Q26-Q32)
+    "e": ["shareholder_risk", "financing_mismatch"],
+    # Cross-module strengths (checked when later module is scored)
+    "c_cross": ["bm_valuation_strength"],
+    "b_cross": ["gene_strength"],
+}
+
+
+def _detect_section_findings(
+    answers: dict, scores: dict[str, float], modules: dict, section_key: str
+) -> list[dict]:
+    """Detect findings relevant to a specific section."""
+    findings: list[dict] = []
+
+    if section_key == "b":
+        q09 = scores.get("Q09", 50)
+        q13 = scores.get("Q13", 50)
+        if q09 <= 25 or q13 <= 30:
+            findings.append({
+                "type": "bottleneck", "severity": "high",
+                "title_zh": "创始人依赖度过高", "title_en": "High Founder Dependency",
+                "description_zh": "企业增长和运营高度依赖创始人个人，缺乏组织化驱动力。这是做大做强的最大障碍之一。",
+                "description_en": "Enterprise growth and operations heavily depend on the founder. Lack of organizational structure is a key barrier to scaling.",
+                "module": 1,
+            })
+        q11 = scores.get("Q11", 50)
+        q12 = scores.get("Q12", 50)
+        if q11 <= 30 or q12 <= 25:
+            findings.append({
+                "type": "bottleneck", "severity": "high",
+                "title_zh": "商业模式可复制性低", "title_en": "Low Business Model Replicability",
+                "description_zh": "企业缺乏标准化流程和SOP，复制到新市场的成功率低。需要先建立可复制的运营体系。",
+                "description_en": "Lack of standardized processes and SOPs. Low replication success rate to new markets.",
+                "module": 1,
+            })
+        # Gene strength
+        gene = modules.get("1", {}).get("score", 0)
+        if gene >= 75:
+            findings.append({
+                "type": "strength", "severity": "low",
+                "title_zh": "企业基因强劲", "title_en": "Strong Enterprise DNA",
+                "description_zh": "企业已具备组织化运营能力，创始人依赖度较低，团队驱动力强。是做大的基础。",
+                "description_en": "Enterprise has strong organizational capability with low founder dependency.",
+                "module": 1,
+            })
+
+    elif section_key == "c":
+        q10 = scores.get("Q10", 50)
+        q14 = scores.get("Q14", 50)
+        if q10 <= 30 and q14 <= 30:
+            findings.append({
+                "type": "bottleneck", "severity": "medium",
+                "title_zh": "收入结构单一且复购率低", "title_en": "Single Revenue Stream with Low Retention",
+                "description_zh": "收入依赖单次交易，客户复购率低。建议建立订阅或复购机制，提升收入可预测性。",
+                "description_en": "Revenue relies on one-time transactions with low customer retention.",
+                "module": 1,
+            })
+        q20 = scores.get("Q20", 50)
+        if q20 <= 25:
+            findings.append({
+                "type": "gap", "severity": "medium",
+                "title_zh": "增长模式尚未验证", "title_en": "Growth Model Not Yet Validated",
+                "description_zh": "企业的增长模式尚未得到市场验证，建议先在小范围内验证可复制性后再推进扩张。",
+                "description_en": "Growth model has not been validated by the market. Consider small-scale validation before expansion.",
+                "module": 2,
+            })
+
+    elif section_key == "d":
+        q22 = scores.get("Q22", 50)
+        if q22 <= 40:
+            findings.append({
+                "type": "gap", "severity": "high" if q22 <= 20 else "medium",
+                "title_zh": "财务规范化程度不足", "title_en": "Insufficient Financial Standardization",
+                "description_zh": "缺乏规范化财务体系或审计基础，这将严重限制融资和上市的可能性。",
+                "description_en": "Lack of standardized financials or audit foundation limits fundraising and listing possibilities.",
+                "module": 3,
+            })
+        q21 = scores.get("Q21", 50)
+        if q21 <= 25:
+            findings.append({
+                "type": "gap", "severity": "medium",
+                "title_zh": "股权结构不清晰", "title_en": "Unclear Equity Structure",
+                "description_zh": "股权结构尚未清晰化，这是进入资本路径的前提条件。建议尽快梳理。",
+                "description_en": "Equity structure not yet clarified — a prerequisite for capital pathway.",
+                "module": 3,
+            })
+        # Cross-module: BM + Valuation strength
+        overall_bm = modules.get("2", {}).get("score", 0)
+        overall_valuation = modules.get("3", {}).get("score", 0)
+        if overall_bm >= 70 and overall_valuation >= 65:
+            findings.append({
+                "type": "strength", "severity": "low",
+                "title_zh": "商业模式成熟度高，具备规模化潜力", "title_en": "Mature Business Model with Scaling Potential",
+                "description_zh": "商业模式已具备较高成熟度和可复制性，结合增长潜力，适合进入资本化加速阶段。",
+                "description_en": "Business model shows high maturity and replicability. Combined with growth potential, ready for capital acceleration.",
+                "module": 2,
+            })
+
+    elif section_key == "e":
+        q27 = scores.get("Q27", 50)
+        if q27 <= 30:
+            findings.append({
+                "type": "gap", "severity": "medium",
+                "title_zh": "股东结构单一或不规范", "title_en": "Simple or Informal Shareholder Structure",
+                "description_zh": "股东结构过于单一或仅有口头安排，缺乏正式化的股权协议，影响融资吸引力。",
+                "description_en": "Shareholder structure is too simple or based on informal arrangements, affecting fundraising appeal.",
+                "module": 4,
+            })
+        q28 = scores.get("Q28", 50)
+        q30 = scores.get("Q30", 50)
+        if q28 <= 25 and q30 >= 70:
+            findings.append({
+                "type": "bottleneck", "severity": "high",
+                "title_zh": "融资准备与时间线不匹配", "title_en": "Financing Preparation Mismatched with Timeline",
+                "description_zh": "融资时间线较紧迫但融资材料准备不足，建议立即启动BP和融资材料的系统化整理。",
+                "description_en": "Fundraising timeline is urgent but preparation materials are insufficient. Start BP and material preparation immediately.",
+                "module": 4,
+            })
+
+    return findings
+
+
+def score_section(answers: dict, section_key: str) -> dict:
+    """
+    Score a single section of the questionnaire.
+
+    Returns:
+        {
+            "section": "b",
+            "enterprise_stage": "...",   # only for section a
+            "stage_score": 55.0,         # only for section a
+            "module_scores": {"1": {...}},
+            "key_findings": [...],
+            "industry": "...",           # Q03 from section a
+            "biggest_obstacle": "...",   # Q32 from section e
+        }
+    """
+    # Score all available questions
+    question_scores: dict[str, float] = {}
+    for q_num in range(1, 35):
+        qid = f"Q{q_num:02d}"
+        if qid in ("Q03", "Q32"):
+            continue
+        answer = answers.get(qid)
+        score = _get_answer_score(qid, answer)
+        if score is not None:
+            question_scores[qid] = score
+
+    result: dict = {
+        "section": section_key,
+        "enterprise_stage": None,
+        "stage_score": None,
+        "module_scores": {},
+        "key_findings": [],
+        "industry": None,
+        "biggest_obstacle": None,
+    }
+
+    # Section A: enterprise stage classification
+    if section_key == "a":
+        stage_score = 0.0
+        stage_weight_sum = 0.0
+        for qid, weight in STAGE_WEIGHTS.items():
+            if qid in question_scores:
+                stage_score += question_scores[qid] * weight
+                stage_weight_sum += weight
+        if stage_weight_sum > 0:
+            stage_score = stage_score / stage_weight_sum
+        result["enterprise_stage"] = classify_enterprise_stage(stage_score)
+        result["stage_score"] = round(stage_score, 1)
+        result["industry"] = answers.get("Q03", "")
+        return result
+
+    # Sections B-F: score mapped modules
+    module_nums = SECTION_MODULE_MAP.get(section_key, [])
+    module_results: dict = {}
+
+    for mod_num in module_nums:
+        mod_def = MODULES[mod_num]
+        weighted_sum = 0.0
+        weight_sum = 0.0
+        q_details = {}
+
+        for qid, weight in mod_def["questions"].items():
+            if qid in question_scores:
+                weighted_sum += question_scores[qid] * weight
+                weight_sum += weight
+                q_details[qid] = {
+                    "answer": answers.get(qid, ""),
+                    "score": question_scores[qid],
+                    "weight": weight,
+                }
+
+        mod_score = (weighted_sum / weight_sum) if weight_sum > 0 else 0.0
+        module_results[str(mod_num)] = {
+            "name_zh": mod_def["name_zh"],
+            "name_en": mod_def["name_en"],
+            "score": round(mod_score, 1),
+            "rating": get_module_rating(mod_score),
+            "questions": q_details,
+        }
+
+    result["module_scores"] = module_results
+
+    # Detect findings for this section
+    # Pass all available module scores (existing + new) for cross-module checks
+    result["key_findings"] = _detect_section_findings(
+        answers, question_scores, module_results, section_key
+    )
+
+    if section_key == "e":
+        result["biggest_obstacle"] = answers.get("Q32", "")
+
+    return result
+
+
+def recalculate_overall(module_scores: dict) -> dict:
+    """
+    Recalculate overall score from available module scores.
+    Normalizes weights based on which modules are present.
+
+    Returns:
+        {"overall_score": 62.5, "overall_rating": "...", "capital_readiness": "amber"}
+    """
+    overall_score = 0.0
+    overall_weight_sum = 0.0
+    for mod_num, weight in MODULE_WEIGHTS.items():
+        mod_data = module_scores.get(str(mod_num))
+        if mod_data and mod_data.get("score", 0) > 0:
+            overall_score += mod_data["score"] * weight
+            overall_weight_sum += weight
+    if overall_weight_sum > 0:
+        overall_score = overall_score / overall_weight_sum
+
+    return {
+        "overall_score": round(overall_score, 1),
+        "overall_rating": get_overall_rating(overall_score),
+        "capital_readiness": get_capital_readiness(overall_score),
+    }

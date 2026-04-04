@@ -26,7 +26,7 @@ class ReportSectionResponse(BaseModel):
 
 class ReportResponse(BaseModel):
     id: uuid.UUID
-    assessment_id: uuid.UUID
+    assessment_id: uuid.UUID | None = None
     company_id: uuid.UUID
     report_type: str
     title: str

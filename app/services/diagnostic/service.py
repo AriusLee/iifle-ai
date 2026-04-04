@@ -8,9 +8,12 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy.orm.attributes import flag_modified
+
 from app.models.diagnostic import Diagnostic, DiagnosticStatus
 from app.models.company import Company
-from app.services.diagnostic.scoring import score_diagnostic
+from app.services.diagnostic.scoring import score_diagnostic, score_section, recalculate_overall
+from app.services.diagnostic.section_analysis import generate_section_analysis
 
 
 async def create_diagnostic(
@@ -105,6 +108,131 @@ async def submit_and_score(
         await db.flush()
         raise
 
+    return diagnostic
+
+
+SECTION_ORDER = ["a", "b", "c", "d", "e", "f"]
+
+
+async def submit_section(
+    db: AsyncSession,
+    diagnostic_id: uuid.UUID,
+    section_key: str,
+    answers: dict,
+    other_answers: dict | None = None,
+) -> Diagnostic:
+    """Submit and score a single section of the questionnaire."""
+    if section_key not in SECTION_ORDER:
+        raise ValueError(f"Invalid section: {section_key}")
+
+    result = await db.execute(
+        select(Diagnostic).where(Diagnostic.id == diagnostic_id)
+    )
+    diagnostic = result.scalar_one_or_none()
+    if not diagnostic:
+        raise ValueError("Diagnostic not found")
+
+    # Ensure module_scores has _meta
+    if not diagnostic.module_scores:
+        diagnostic.module_scores = {}
+    meta = diagnostic.module_scores.get("_meta", {"sections_submitted": []})
+    sections_submitted = meta.get("sections_submitted", [])
+
+    # Validate ordering: previous section must be submitted (unless re-submitting)
+    section_idx = SECTION_ORDER.index(section_key)
+    if section_key not in sections_submitted and section_idx > 0:
+        prev = SECTION_ORDER[section_idx - 1]
+        if prev not in sections_submitted:
+            raise ValueError(f"Section {prev.upper()} must be submitted first")
+
+    # Merge answers
+    existing_answers = diagnostic.answers or {}
+    existing_answers.update(answers)
+    diagnostic.answers = existing_answers
+
+    if other_answers is not None:
+        existing_other = diagnostic.other_answers or {}
+        existing_other.update(other_answers)
+        diagnostic.other_answers = existing_other
+
+    # Score this section
+    section_result = score_section(diagnostic.answers, section_key)
+
+    # Merge module scores
+    for mod_key, mod_data in section_result["module_scores"].items():
+        diagnostic.module_scores[mod_key] = mod_data
+
+    # Update enterprise stage (section a)
+    if section_result["enterprise_stage"]:
+        diagnostic.enterprise_stage = section_result["enterprise_stage"]
+    if section_result.get("stage_score") is not None:
+        meta["stage_score"] = section_result["stage_score"]
+
+    # Update industry from section a
+    if section_result.get("industry"):
+        company_result = await db.execute(
+            select(Company).where(Company.id == diagnostic.company_id)
+        )
+        company = company_result.scalar_one_or_none()
+        if company and not company.primary_industry:
+            company.primary_industry = section_result["industry"]
+
+    # Replace findings for this section's modules, keep findings from other modules
+    new_finding_modules = set()
+    for f in section_result["key_findings"]:
+        new_finding_modules.add(f["module"])
+
+    existing_findings = diagnostic.key_findings or []
+    # Keep findings from other modules
+    kept_findings = [f for f in existing_findings if f.get("module") not in new_finding_modules]
+    diagnostic.key_findings = kept_findings + section_result["key_findings"]
+
+    # Generate AI analysis for this section
+    try:
+        analysis = await generate_section_analysis(
+            diagnostic.answers, section_key, section_result
+        )
+        meta.setdefault("section_analyses", {})[section_key] = analysis
+    except Exception:
+        pass  # Non-critical, don't block scoring
+
+    # Track submitted sections
+    if section_key not in sections_submitted:
+        sections_submitted.append(section_key)
+    meta["sections_submitted"] = sections_submitted
+    meta.setdefault("section_submitted_at", {})[section_key] = (
+        datetime.now(timezone.utc).isoformat()
+    )
+    diagnostic.module_scores["_meta"] = meta
+
+    # Recalculate overall score from available modules
+    overall = recalculate_overall(diagnostic.module_scores)
+    diagnostic.overall_score = overall["overall_score"]
+    diagnostic.overall_rating = overall["overall_rating"]
+    diagnostic.capital_readiness = overall["capital_readiness"]
+
+    # Set timestamps and status
+    if not diagnostic.submitted_at:
+        diagnostic.submitted_at = datetime.now(timezone.utc)
+
+    all_submitted = all(s in sections_submitted for s in SECTION_ORDER)
+    if all_submitted:
+        diagnostic.status = DiagnosticStatus.completed
+        diagnostic.scored_at = datetime.now(timezone.utc)
+    else:
+        diagnostic.status = DiagnosticStatus.submitted
+
+    diagnostic.error_message = None
+    diagnostic.progress_message = None
+
+    # Flag JSONB columns as modified for SQLAlchemy
+    flag_modified(diagnostic, "module_scores")
+    flag_modified(diagnostic, "key_findings")
+    flag_modified(diagnostic, "answers")
+    if other_answers is not None:
+        flag_modified(diagnostic, "other_answers")
+
+    await db.flush()
     return diagnostic
 
 

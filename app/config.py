@@ -30,7 +30,7 @@ class Settings(BaseSettings):
 
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"
 
-    CORS_ORIGINS: list[str] = ["http://localhost:2020"]
+    CORS_ORIGINS: list[str] = ["http://localhost:2020", "http://localhost:2050"]
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
