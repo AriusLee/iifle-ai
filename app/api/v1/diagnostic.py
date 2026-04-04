@@ -328,7 +328,8 @@ async def generate_report(
     diagnostic = await diagnostic_service.get_diagnostic(db, diagnostic_id)
     if not diagnostic:
         raise HTTPException(status_code=404, detail="Diagnostic not found")
-    if diagnostic.status != DiagnosticStatus.completed:
+    has_scores = diagnostic.module_scores and any(k != "_meta" for k in (diagnostic.module_scores or {}))
+    if not has_scores:
         raise HTTPException(status_code=400, detail="Diagnostic must be scored before generating report")
 
     company_result = await db.execute(
