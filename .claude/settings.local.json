@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/ariuslee/Projects/IIFLE/frontend/**)",
+      "Bash(node -e ':*)"
+    ]
+  }
+}
