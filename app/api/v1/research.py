@@ -63,6 +63,20 @@ async def trigger_research(
             detail="No API key configured. Go to Settings to add your Groq API key.",
         )
 
+    # Mark the latest research as in_progress so the frontend sees immediate feedback
+    result = await db.execute(
+        select(CompanyResearch)
+        .where(CompanyResearch.company_id == company_id)
+        .order_by(CompanyResearch.created_at.desc())
+        .limit(1)
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        existing.status = "in_progress"
+        existing.company_data = {}
+        existing.industry_data = {}
+        existing.peer_data = {}
+
     async def _run(cid: uuid.UUID):
         from app.services.ai.research import ResearchService
         async with async_session_factory() as session:
