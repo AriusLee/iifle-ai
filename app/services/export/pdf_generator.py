@@ -70,6 +70,7 @@ def _render_html(
 <html lang="{language}">
 <head>
     <meta charset="UTF-8">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700&display=swap">
     <style>
         @page {{
             size: A4;
@@ -88,7 +89,7 @@ def _render_html(
         }}
 
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", "Noto Sans", sans-serif;
+            font-family: "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             font-size: 11px;
             line-height: 1.6;
             color: #1e293b;
