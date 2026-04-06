@@ -156,8 +156,28 @@ async def list_diagnostics(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all diagnostics — all logged-in users see everything."""
+    """List all diagnostics (advisor dashboard)."""
     diagnostics = await diagnostic_service.list_all_diagnostics(db)
+
+    # Fetch company names
+    results = []
+    for d in diagnostics:
+        company_result = await db.execute(
+            select(Company.legal_name).where(Company.id == d.company_id)
+        )
+        company_name = company_result.scalar_one_or_none()
+        results.append(_diagnostic_to_out(d, company_name))
+
+    return results
+
+
+@router.get("/mine", response_model=list[DiagnosticOut])
+async def list_my_diagnostics(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List diagnostics belonging to the current user (customer portal)."""
+    diagnostics = await diagnostic_service.list_diagnostics(db, user_id=current_user.id)
 
     # Fetch company names
     results = []
