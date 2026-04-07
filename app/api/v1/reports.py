@@ -71,7 +71,20 @@ async def _get_report_or_404(
     return report
 
 
-def _report_to_response(report: Report) -> ReportResponse:
+# Total section count for diagnostic-type reports — derived from the
+# DIAGNOSTIC_SECTIONS constant so we don't drift if it grows.
+def _report_total_sections(report: Report) -> int:
+    if report.report_type.value == "diagnostic":
+        from app.services.diagnostic.report_generator import DIAGNOSTIC_SECTIONS
+        return len(DIAGNOSTIC_SECTIONS)
+    return 0
+
+
+def _report_to_response(
+    report: Report,
+    sections_done: int = 0,
+    sections_done_keys: list[str] | None = None,
+) -> ReportResponse:
     return ReportResponse(
         id=report.id,
         assessment_id=report.assessment_id,
@@ -85,6 +98,9 @@ def _report_to_response(report: Report) -> ReportResponse:
         approved_at=report.approved_at,
         created_at=report.created_at,
         updated_at=report.updated_at,
+        sections_done=sections_done,
+        sections_total=_report_total_sections(report),
+        sections_done_keys=sections_done_keys or [],
     )
 
 
@@ -209,17 +225,30 @@ async def list_reports(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(["admin", "advisor", "client"])),
 ):
-    """List all reports for a company, ordered newest first."""
+    """List all reports for a company, ordered newest first.
+    Includes per-report section progress so the frontend can show
+    a live "X / Y sections complete" indicator while a report is generating.
+    """
     await _get_company_or_404(company_id, db)
 
+    # Eager-load sections so we can compute the progress count without N+1.
+    # The list endpoint is cheap (≤ tens of reports per company) so this is fine.
     result = await db.execute(
         select(Report)
+        .options(selectinload(Report.sections))
         .where(Report.company_id == company_id)
         .order_by(Report.created_at.desc())
     )
     reports = result.scalars().all()
 
-    return [_report_to_response(r) for r in reports]
+    return [
+        _report_to_response(
+            r,
+            sections_done=len(r.sections),
+            sections_done_keys=[s.section_key for s in sorted(r.sections, key=lambda x: x.sort_order)],
+        )
+        for r in reports
+    ]
 
 
 @router.delete(

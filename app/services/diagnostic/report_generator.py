@@ -21,6 +21,12 @@ from app.services.diagnostic.listing_requirements import (
 
 logger = logging.getLogger(__name__)
 
+# Maximum number of report sections to generate in parallel via the AI
+# provider. Higher values give faster end-to-end report generation but
+# risk hitting per-minute rate limits on the AI provider. 5 is a safe
+# default for DeepSeek / Groq paid tiers; lower it if you see 429s.
+_REPORT_PARALLELISM = 5
+
 # Report sections for the Unicorn Diagnostic (8-section template)
 DIAGNOSTIC_SECTIONS = [
     {
@@ -395,13 +401,19 @@ FORMAT:
 ## English
 [Concise English summary of the same analysis]"""
 
-    for section_def in DIAGNOSTIC_SECTIONS:
-        section_prompt = _get_section_prompt(section_def["key"])
+    # Generate all sections in parallel. Each section is independent (same
+    # `context`, no cross-references), so we can fan out the AI calls and only
+    # serialize the DB inserts at the end. A semaphore caps concurrency to
+    # avoid hammering the AI provider's rate limit.
+    import asyncio
 
-        try:
-            # For the listing_requirements section we pre-pick the tier pair so
-            # the AI gets accurate context AND we can append a deterministic
-            # markdown table afterwards (no risk of hallucinated thresholds).
+    sem = asyncio.Semaphore(_REPORT_PARALLELISM)
+
+    async def _generate_one(section_def: dict) -> dict:
+        """Generate one section's content under the semaphore. Returns a result
+        dict — never raises (errors are captured into the dict)."""
+        async with sem:
+            section_prompt = _get_section_prompt(section_def["key"])
             listing_pair = None
             section_user_prompt = (
                 f"Section: {section_def['title_cn']} / {section_def['title_en']}\n\n"
@@ -411,7 +423,7 @@ FORMAT:
 
             if section_def["key"] == "listing_requirements":
                 listing_pair = pick_tiers_for_stage(diagnostic.enterprise_stage)
-                listing_addendum = (
+                section_user_prompt += (
                     "\n\n## Selected Tier Pair (auto-picked from enterprise stage)\n"
                     f"- Malaysia (SC): {listing_pair.my.board_zh} / {listing_pair.my.board_en}\n"
                     f"- United States (SEC): {listing_pair.us.board_zh} / {listing_pair.us.board_en}\n"
@@ -419,55 +431,98 @@ FORMAT:
                     f"- Rationale (en): {listing_pair.rationale_en}\n"
                     "\nIMPORTANT: Use the tier names above in your commentary, but do NOT reproduce the criteria — they will be appended as a table automatically.\n"
                 )
-                section_user_prompt += listing_addendum
 
-            response = await ai_client._chat(
-                system_prompt,
-                section_user_prompt,
-                0.4,
-            )
+            try:
+                response = await ai_client._chat(
+                    system_prompt,
+                    section_user_prompt,
+                    0.4,
+                )
+                content_cn, content_en = _parse_bilingual(response)
 
-            # Parse bilingual response
-            content_cn, content_en = _parse_bilingual(response)
+                if listing_pair is not None:
+                    table_cn = render_markdown_comparison(listing_pair, language="cn")
+                    table_en = render_markdown_comparison(listing_pair, language="en")
+                    content_cn = (content_cn or "").rstrip() + "\n\n### 上市要求对比表\n\n" + table_cn + "\n\n*以上为公开披露的上市规则参考摘要，实际申报需以交易所最新规定及保荐机构意见为准。*"
+                    content_en = (content_en or "").rstrip() + "\n\n### Listing Requirements Comparison\n\n" + table_en + "\n\n*Reference summary of publicly disclosed listing rules. Actual eligibility requires the latest exchange rules and sponsor advisory.*"
 
-            # Append deterministic comparison table for the listing_requirements section
-            if listing_pair is not None:
-                table_cn = render_markdown_comparison(listing_pair, language="cn")
-                table_en = render_markdown_comparison(listing_pair, language="en")
-                content_cn = (content_cn or "").rstrip() + "\n\n### 上市要求对比表\n\n" + table_cn + "\n\n*以上为公开披露的上市规则参考摘要，实际申报需以交易所最新规定及保荐机构意见为准。*"
-                content_en = (content_en or "").rstrip() + "\n\n### Listing Requirements Comparison\n\n" + table_en + "\n\n*Reference summary of publicly disclosed listing rules. Actual eligibility requires the latest exchange rules and sponsor advisory.*"
+                return {
+                    "section_def": section_def,
+                    "content_cn": content_cn,
+                    "content_en": content_en,
+                    "listing_pair": listing_pair,
+                    "ok": True,
+                }
+            except Exception as exc:
+                logger.error(f"Failed to generate section {section_def['key']}: {exc}")
+                return {
+                    "section_def": section_def,
+                    "error": str(exc),
+                    "ok": False,
+                }
 
+    import time
+    t0 = time.monotonic()
+
+    # Fan out all section AI calls. Insert each ReportSection row + flush as
+    # soon as its task completes — that way the polling reports list endpoint
+    # sees progress in real time (sections_done count climbs as the AI works).
+    pending = [asyncio.create_task(_generate_one(sd)) for sd in DIAGNOSTIC_SECTIONS]
+    completed_count = 0
+
+    for fut in asyncio.as_completed(pending):
+        result = await fut
+        section_def = result["section_def"]
+
+        if result["ok"]:
             section_content_data: dict = {
                 "module_scores": diagnostic.module_scores,
                 "overall_score": float(diagnostic.overall_score) if diagnostic.overall_score else None,
             }
-            if listing_pair is not None:
-                section_content_data["listing_pair"] = listing_pair_to_dict(listing_pair)
+            if result["listing_pair"] is not None:
+                section_content_data["listing_pair"] = listing_pair_to_dict(result["listing_pair"])
 
             section = ReportSection(
                 report_id=report.id,
                 section_key=section_def["key"],
                 section_title=f"{section_def['title_cn']} / {section_def['title_en']}",
-                content_cn=content_cn,
-                content_en=content_en,
+                content_cn=result["content_cn"],
+                content_en=result["content_en"],
                 content_data=section_content_data,
                 sort_order=section_def["sort_order"],
                 is_ai_generated=True,
             )
-            db.add(section)
-
-        except Exception as exc:
-            logger.error(f"Failed to generate section {section_def['key']}: {exc}")
+        else:
             section = ReportSection(
                 report_id=report.id,
                 section_key=section_def["key"],
                 section_title=f"{section_def['title_cn']} / {section_def['title_en']}",
-                content_cn=f"[生成失败] {str(exc)[:200]}",
-                content_en=f"[Generation failed] {str(exc)[:200]}",
+                content_cn=f"[生成失败] {result['error'][:200]}",
+                content_en=f"[Generation failed] {result['error'][:200]}",
                 sort_order=section_def["sort_order"],
                 is_ai_generated=False,
             )
-            db.add(section)
+        db.add(section)
+        # Flush so the new row is visible to the next poll. Status stays
+        # `generating` until all sections are inserted, so the frontend keeps
+        # polling and the user sees the progress count climb.
+        await db.flush()
+        completed_count += 1
+        logger.info(
+            "Report %s — section %s done (%d/%d, %.1fs elapsed)",
+            report.id,
+            section_def["key"],
+            completed_count,
+            len(DIAGNOSTIC_SECTIONS),
+            time.monotonic() - t0,
+        )
+
+    logger.info(
+        "Generated %d sections in %.1fs (concurrency=%d)",
+        completed_count,
+        time.monotonic() - t0,
+        _REPORT_PARALLELISM,
+    )
 
     report.status = ReportStatus.draft
     await db.flush()

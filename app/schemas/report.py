@@ -37,6 +37,12 @@ class ReportResponse(BaseModel):
     approved_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+    # Progress tracking — populated by the API layer for the list endpoint
+    # so the frontend can show "5/9 sections complete" while a report is
+    # in the `generating` state.
+    sections_done: int = 0
+    sections_total: int = 0
+    sections_done_keys: list[str] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 
