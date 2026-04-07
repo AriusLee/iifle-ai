@@ -13,6 +13,11 @@ from app.models.company import Company
 from app.models.diagnostic import Diagnostic
 from app.models.report import Report, ReportSection, ReportLanguage, ReportStatus, ReportType
 from app.services.ai.provider import get_ai_client
+from app.services.diagnostic.listing_requirements import (
+    pick_tiers_for_stage,
+    render_markdown_comparison,
+    to_dict as listing_pair_to_dict,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,10 +66,16 @@ DIAGNOSTIC_SECTIONS = [
         "sort_order": 7,
     },
     {
+        "key": "listing_requirements",
+        "title_en": "Listing Requirements — Bursa SC vs US SEC",
+        "title_cn": "上市要求对比 — 马来西亚 SC 与 美国 SEC",
+        "sort_order": 8,
+    },
+    {
         "key": "next_steps",
         "title_en": "Recommended Next Steps",
         "title_cn": "建议承接方向",
-        "sort_order": 8,
+        "sort_order": 9,
     },
 ]
 
@@ -236,6 +247,23 @@ One-line explanation of why.
 Be honest in your ratings — most early-stage companies will be "Low" or "Not Ready" in most categories. Do not inflate ratings to be polite.
 200-300 words in Chinese, 80-120 in English.""",
 
+        "listing_requirements": """Write a SHORT narrative commentary (NOT the table — the table will be appended automatically) introducing the side-by-side listing requirements comparison.
+
+Structure your commentary in 3 short paragraphs:
+
+1. **为什么对比这两个市场 (Why these two markets)** — 1 short paragraph explaining why we benchmark against Bursa Malaysia (SC) and US NASDAQ (SEC) for THIS company. Reference the company's stage, ambition, and any signal from their answers about geographic / capital ambitions.
+
+2. **对该企业的现实意义 (What this means for them)** — 1 short paragraph that grounds the comparison in the company's actual situation. Reference their REAL revenue, profit status, team size, and equity structure. Be specific about which thresholds they are far from, close to, or already meet. Do NOT invent numbers.
+
+3. **下一步重点 (Where to focus next)** — 1 short paragraph naming the 2-3 highest-leverage gaps to close if they want to credibly approach EITHER market in the next 24-36 months.
+
+CRITICAL:
+- Do NOT generate a table — a deterministic comparison table will be appended automatically.
+- Do NOT invent specific listing rule numbers — refer to thresholds in general terms (e.g. "the profit threshold", "the public float requirement"). The accurate numbers live in the appended table.
+- Reference the company's actual data points from the questionnaire context.
+- Tone: senior consultant, direct, no boilerplate.
+- 200-300 words in Chinese, 80-120 in English.""",
+
         "next_steps": """Recommend what IIFLE should offer this company as next steps. Adapt to the company's stage:
 
 **For early-stage companies, recommend:**
@@ -371,23 +399,50 @@ FORMAT:
         section_prompt = _get_section_prompt(section_def["key"])
 
         try:
-            section_context = {
-                "section": section_def["title_en"],
-                "section_zh": section_def["title_cn"],
-                "instructions": section_prompt,
-                "diagnostic_data": context,
-            }
+            # For the listing_requirements section we pre-pick the tier pair so
+            # the AI gets accurate context AND we can append a deterministic
+            # markdown table afterwards (no risk of hallucinated thresholds).
+            listing_pair = None
+            section_user_prompt = (
+                f"Section: {section_def['title_cn']} / {section_def['title_en']}\n\n"
+                f"{section_prompt}\n\n"
+                f"Context:\n{context}"
+            )
+
+            if section_def["key"] == "listing_requirements":
+                listing_pair = pick_tiers_for_stage(diagnostic.enterprise_stage)
+                listing_addendum = (
+                    "\n\n## Selected Tier Pair (auto-picked from enterprise stage)\n"
+                    f"- Malaysia (SC): {listing_pair.my.board_zh} / {listing_pair.my.board_en}\n"
+                    f"- United States (SEC): {listing_pair.us.board_zh} / {listing_pair.us.board_en}\n"
+                    f"- Rationale (zh): {listing_pair.rationale_zh}\n"
+                    f"- Rationale (en): {listing_pair.rationale_en}\n"
+                    "\nIMPORTANT: Use the tier names above in your commentary, but do NOT reproduce the criteria — they will be appended as a table automatically.\n"
+                )
+                section_user_prompt += listing_addendum
 
             response = await ai_client._chat(
                 system_prompt,
-                f"Section: {section_def['title_cn']} / {section_def['title_en']}\n\n"
-                f"{section_prompt}\n\n"
-                f"Context:\n{context}",
+                section_user_prompt,
                 0.4,
             )
 
             # Parse bilingual response
             content_cn, content_en = _parse_bilingual(response)
+
+            # Append deterministic comparison table for the listing_requirements section
+            if listing_pair is not None:
+                table_cn = render_markdown_comparison(listing_pair, language="cn")
+                table_en = render_markdown_comparison(listing_pair, language="en")
+                content_cn = (content_cn or "").rstrip() + "\n\n### 上市要求对比表\n\n" + table_cn + "\n\n*以上为公开披露的上市规则参考摘要，实际申报需以交易所最新规定及保荐机构意见为准。*"
+                content_en = (content_en or "").rstrip() + "\n\n### Listing Requirements Comparison\n\n" + table_en + "\n\n*Reference summary of publicly disclosed listing rules. Actual eligibility requires the latest exchange rules and sponsor advisory.*"
+
+            section_content_data: dict = {
+                "module_scores": diagnostic.module_scores,
+                "overall_score": float(diagnostic.overall_score) if diagnostic.overall_score else None,
+            }
+            if listing_pair is not None:
+                section_content_data["listing_pair"] = listing_pair_to_dict(listing_pair)
 
             section = ReportSection(
                 report_id=report.id,
@@ -395,10 +450,7 @@ FORMAT:
                 section_title=f"{section_def['title_cn']} / {section_def['title_en']}",
                 content_cn=content_cn,
                 content_en=content_en,
-                content_data={
-                    "module_scores": diagnostic.module_scores,
-                    "overall_score": float(diagnostic.overall_score) if diagnostic.overall_score else None,
-                },
+                content_data=section_content_data,
                 sort_order=section_def["sort_order"],
                 is_ai_generated=True,
             )

@@ -187,10 +187,14 @@ async def submit_section(
     kept_findings = [f for f in existing_findings if f.get("module") not in new_finding_modules]
     diagnostic.key_findings = kept_findings + section_result["key_findings"]
 
-    # Generate AI analysis for this section
+    # Generate AI analysis for this section.
+    # Pass the latest enterprise_stage so non-A modules get stage-aware advice.
     try:
         analysis = await generate_section_analysis(
-            diagnostic.answers, section_key, section_result
+            diagnostic.answers,
+            section_key,
+            section_result,
+            enterprise_stage=diagnostic.enterprise_stage,
         )
         meta.setdefault("section_analyses", {})[section_key] = analysis
     except Exception:
