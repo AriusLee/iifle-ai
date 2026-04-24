@@ -18,6 +18,7 @@ class ReportType(str, enum.Enum):
     module_6 = "module_6"
     master = "master"
     diagnostic = "diagnostic"
+    battle_map = "battle_map"
 
 
 class ReportStatus(str, enum.Enum):

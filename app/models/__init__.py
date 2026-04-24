@@ -7,6 +7,7 @@ from app.models.assessment import Assessment, AssessmentStatus, CapitalReadiness
 from app.models.report import Report, ReportSection, ReportType, ReportStatus, ReportLanguage
 from app.models.chat import ChatConversation, ChatMessage, ContextType, MessageRole
 from app.models.diagnostic import Diagnostic, DiagnosticStatus
+from app.models.battlemap import BattleMap, BattleMapStatus, BattleMapVariant
 
 __all__ = [
     "User",
@@ -40,4 +41,7 @@ __all__ = [
     "MessageRole",
     "Diagnostic",
     "DiagnosticStatus",
+    "BattleMap",
+    "BattleMapStatus",
+    "BattleMapVariant",
 ]
