@@ -66,6 +66,17 @@ QUESTION_TEXT: dict[str, tuple[str, str]] = {
     "Q33": ("退出方向", "Exit direction"),
     "Q34": ("上市准备状态", "IPO readiness"),
     "Q35": ("报告期望焦点", "Report focus areas"),
+    # E2 · SME Bank-Loan Readiness (mapped to bank underwriting metrics)
+    "Q36": ("税前利润 (PBT) 利润率", "PBT margin"),
+    "Q37": ("董事个人信用卡使用率", "Director credit-card utilisation"),
+    "Q38": ("公司或董事法律诉讼", "Ongoing legal cases"),
+    "Q39": ("公司注册年数", "Years incorporated"),
+    "Q40": ("银行月结单平均月末余额", "Bank statement ending balance"),
+    "Q41": ("资产负债率 (借贷/股东权益)", "Gearing ratio (borrowings/equity)"),
+    "Q42": ("DSCR (EBITDA/年度偿债)", "DSCR (EBITDA / annual debt service)"),
+    "Q43": ("最新股东权益", "Latest shareholder equity"),
+    "Q44": ("现有借贷还款记录 (CCRIS)", "Repayment record / CCRIS"),
+    "Q45": ("营收和利润趋势", "Revenue & profit trend"),
 }
 
 # Per-module analytical lens — tells the AI what to LOOK FOR in each module.
@@ -94,10 +105,12 @@ SECTION_LENS = {
         "增长逻辑是规模还是网络效应、企业类型属于经营/业务/成长/资本/平台型哪一种。"
     ),
     "e": (
-        "评估企业的资本就绪度——能不能「接得住」投资人的钱。"
-        "重点看：股权清不清晰、财务规不规范、有没有BP和路演材料、"
-        "时间预期合不合理、最大障碍是什么。"
-        "结论应该是：「如果今天投资人来看你，你能不能签字？」"
+        "评估企业的资本就绪度——同时覆盖两条融资路径：股权融资和银行贷款。"
+        "E1 股权部分：股权清不清晰、财务规不规范、有没有 BP 和路演材料、最大障碍是什么。"
+        "E2 银行贷款部分：按银行 SME 贷款的五大核心准则评估——DSCR (>1.0x)、"
+        "资产负债率 (<3.0x)、CCRIS 还款记录、董事信用卡使用率 (<70%)、营收利润趋势、"
+        "银行流水月末余额 (5-20% 月入)。"
+        "结论分两条线：「投资人今天能不能签字？」+「银行今天会不会批贷款？」"
     ),
     "f": (
         "判断企业对终局的思考深度。"
@@ -181,7 +194,54 @@ SYSTEM_PROMPT = (
 )
 
 
-def _build_prompt(context: str) -> str:
+def _build_prompt(context: str, section_key: str | None = None) -> str:
+    # Section E has two parallel readiness paths (equity + bank-loan).
+    # The default "pick ONE weakness" rule loses critical bank red-flags
+    # (DSCR <1, CCRIS late, gearing >3, etc.) so we relax it here.
+    section_e_addendum = ""
+    if section_key == "e":
+        section_e_addendum = """
+【Section E 专属硬性要求 / Section E Specific Rules】
+A. 融资模块覆盖两条独立路径——E1 股权融资就绪度（Q26-Q32）+ E2 银行 SME 贷款就绪度（Q36-Q45）。
+   不能只谈一条路径而忽略另一条。【现状判断】必须分别给出两条路径的结论。
+   This module covers two parallel paths — E1 equity readiness (Q26-Q32) and E2 SME bank-loan readiness (Q36-Q45).
+   You MUST address both paths in [State] — one verdict each, not just one.
+B. 上方 "Detected Findings" 中所有 [bottleneck] 类型的发现，每一项都必须在【关键短板】中单独成条出现，
+   并且每一项在【行动建议】中必须有对应的具体动作。不允许合并、省略或弱化为"其他"。
+   EVERY [bottleneck] item in "Detected Findings" above MUST appear as its own separate line in [Weakness],
+   and each must have a matching concrete action in [Next Steps]. No bundling, no skipping, no softening to "other gaps".
+C. 银行红线（DSCR < 1.0x、资产负债率 > 3.0x、CCRIS 不良、信用卡使用率 > 70%、负权益、营收下降、
+   公司或董事有诉讼）一旦命中，必须明确指出"银行会直接拒批"或"违反银行准则"，不能用模糊语言。
+   When a bank red-line is hit (DSCR < 1.0x, gearing > 3.0x, adverse CCRIS, credit-card > 70%, negative equity,
+   declining revenue, ongoing legal cases), say explicitly "the bank will reject this" or "fails bank criterion" —
+   no soft language.
+"""
+
+    # Section E allows 2-4 weakness items because of the two-path structure.
+    # All other sections keep the original single-weakness format.
+    if section_key == "e":
+        weakness_block_zh = (
+            "（每个 [bottleneck] 类型的 Detected Finding 一条，每条以 '•' 开头，"
+            "1-2 句话说明问题严重性。允许 2-5 条。）"
+        )
+        weakness_block_en = (
+            "(One bullet per [bottleneck] item from Detected Findings. Each bullet starts with '•' "
+            "and is 1-2 sentences on what's broken. 2-5 bullets allowed.)"
+        )
+        actions_block_zh = (
+            "（每条对应上方一个【关键短板】。每条以 '•' 开头，必须是具体动作（数字、时间窗、动作主体）"
+            "而不是模糊建议。允许 3-6 条。）"
+        )
+        actions_block_en = (
+            "(One bullet per [Weakness] above. Each starts with '•' and must be a concrete action "
+            "(numbers, time windows, who does it) — no vague advice. 3-6 bullets allowed.)"
+        )
+    else:
+        weakness_block_zh = "（1-2句话，指出该模块中最严重的1个问题。说明它\"为什么是短板\"以及如果不解决会发生什么。）"
+        weakness_block_en = "(1-2 sentences. The single biggest gap in this module — what it is and what happens if it's not fixed.)"
+        actions_block_zh = "（2-3条具体可执行的建议。每条以\"•\"开头。建议必须与上述短板对应，并符合企业当前阶段。）"
+        actions_block_en = "(2-3 concrete actionable bullets, each starting with \"•\". Must address the weakness above and fit the company's current stage.)"
+
     return f"""根据以下企业诊断数据，撰写一份针对该模块的简明分析报告。
 
 【硬性要求 / Hard Requirements】
@@ -192,7 +252,7 @@ def _build_prompt(context: str) -> str:
 3. 必须遵守"分析视角"和"阶段语调指引"——不要给一个早期企业谈融资细节。
    You MUST respect the "Analytical Lens" and "Stage Tone" — don't give fundraising tactics to a concept-stage company.
 4. 输出严格按照下方结构，使用中文标签【现状判断】【核心优势】【关键短板】【行动建议】，英文使用 [State] [Strength] [Weakness] [Next Steps]。
-
+{section_e_addendum}
 【输出格式 / Output Format】
 [ZH]
 【现状判断】
@@ -202,10 +262,10 @@ def _build_prompt(context: str) -> str:
 （1-2句话，指出该模块中表现最好的1个方面。说明它"为什么是优势"以及它能带来什么。）
 
 【关键短板】
-（1-2句话，指出该模块中最严重的1个问题。说明它"为什么是短板"以及如果不解决会发生什么。）
+{weakness_block_zh}
 
 【行动建议】
-（2-3条具体可执行的建议。每条以"•"开头。建议必须与上述短板对应，并符合企业当前阶段。）
+{actions_block_zh}
 
 [EN]
 [State]
@@ -215,10 +275,10 @@ def _build_prompt(context: str) -> str:
 (1-2 sentences. The single strongest aspect of this module — what it is and what it enables.)
 
 [Weakness]
-(1-2 sentences. The single biggest gap in this module — what it is and what happens if it's not fixed.)
+{weakness_block_en}
 
 [Next Steps]
-(2-3 concrete actionable bullets, each starting with "•". Must address the weakness above and fit the company's current stage.)
+{actions_block_en}
 
 {context}
 """
@@ -237,7 +297,7 @@ async def generate_section_analysis(
         {"analysis_zh": "...", "analysis_en": "..."}
     """
     context = _build_section_context(answers, section_key, score_result, enterprise_stage)
-    prompt = _build_prompt(context)
+    prompt = _build_prompt(context, section_key=section_key)
 
     try:
         client = get_ai_client()

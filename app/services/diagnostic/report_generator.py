@@ -111,7 +111,7 @@ Country: {company.country}
             context += f"- Module {mod_num} ({mod.get('name_zh', '')}/{mod.get('name_en', '')}): {mod.get('score', 'N/A')}/100 — {mod.get('rating', 'N/A')}\n"
 
     context += "\n## Questionnaire Answers\n"
-    for q_num in range(1, 28):
+    for q_num in range(1, 46):
         qid = f"Q{q_num:02d}"
         answer = answers.get(qid)
         if answer:
@@ -122,9 +122,9 @@ Country: {company.country}
         for f in findings:
             context += f"- [{f.get('type', '')}] {f.get('title_zh', '')} / {f.get('title_en', '')}: {f.get('description_zh', '')}\n"
 
-    report_focus = answers.get("Q27", [])
+    report_focus = answers.get("Q35", [])
     if report_focus:
-        context += f"\n## Customer's Report Focus (Q27): {', '.join(report_focus) if isinstance(report_focus, list) else report_focus}\n"
+        context += f"\n## Customer's Report Focus (Q35): {', '.join(report_focus) if isinstance(report_focus, list) else report_focus}\n"
 
     return context
 

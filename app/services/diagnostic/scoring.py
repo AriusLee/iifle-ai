@@ -1,16 +1,22 @@
 """
-Scoring engine for the V2 35-question Unicorn Diagnostic Questionnaire.
+Scoring engine for the V2.1 45-question Unicorn Diagnostic Questionnaire.
 
 Maps answers to 6 module scores + overall score + enterprise stage classification.
 
-V2 changes:
-- 35 questions (Q01-Q35) instead of 27
-- 6 blocks (A-F) with updated module mappings
-- Block A (Q01-Q06) → Stage classification
-- Block B (Q07-Q14) → Module 1: Gene Structure
-- Block C (Q15-Q20) → Module 2: Business Model
+V2.1 changes (over V2):
+- 45 questions (Q01-Q35 + Q36-Q45) — adds 10 SME bank-loan readiness questions
+  inside Section E, mapped to bank underwriting metrics (DSCR, gearing, CCRIS,
+  bank statements, revenue/profit trend).
+- Block E now has two sub-blocks: E1 equity readiness (Q26-Q32, unchanged) and
+  E2 bank-loan readiness (Q36-Q45, new). Both feed Module 4 with rebalanced
+  weights (50% equity / 50% bank-loan).
+
+V2 layout:
+- Block A (Q01-Q08) → Stage classification
+- Block B (Q09-Q13) → Module 1: Gene Structure
+- Block C (Q14-Q20) → Module 2: Business Model
 - Block D (Q21-Q25) → Module 3: Valuation
-- Block E (Q26-Q32) → Module 4: Financing
+- Block E (Q26-Q32 + Q36-Q45) → Module 4: Financing (equity + bank-loan)
 - Block F (Q33-Q34) → Module 5: Exit + Module 6: Listing
 - Q35 → Report personalization (multi-select, no scoring)
 """
@@ -259,6 +265,83 @@ SCORE_MAP: dict[str, dict[str, int]] = {
     },
     # Q32 is classification only (biggest obstacle) — no scoring
 
+    # ══ Block E2: SME Bank-Loan Readiness (Q36-Q45) ════════════════════════
+    # Bucketed against the bank's 5 core SME-loan criteria from the
+    # "Bank Loan General Criterias" reference: DSCR > 1.0x, gearing < 3.0x,
+    # credit-card utilisation < 70%, revenue/profit uptrend, healthy bank
+    # statements (no bound cheque, ending balance 5-20% of deposits).
+    # All on the standard 5-bucket 10/30/50/70/90 ladder.
+    "Q36": {  # Latest PBT margin
+        "亏损 / 负 PBT": 10,
+        "盈亏平衡 (利润率 0–3%)": 30,
+        "利润率 3–8%": 50,
+        "利润率 8–15%": 70,
+        "利润率 > 15%": 90,
+    },
+    "Q37": {  # Director's personal credit-card utilisation (bank red-line >70%)
+        "> 70% (银行不接受)": 10,
+        "50–70%": 30,
+        "30–50%": 50,
+        "10–30%": 70,
+        "< 10% 或不使用信用卡": 90,
+    },
+    "Q38": {  # Ongoing legal cases
+        "是，公司和董事都有": 10,
+        "是，仅公司有": 30,
+        "是，仅董事个人有": 30,
+        "历史上有但已结案": 70,
+        "完全没有": 90,
+    },
+    "Q39": {  # Years incorporated (bank min >1yr)
+        "< 1 年 (低于银行最低要求)": 10,
+        "1–2 年": 30,
+        "2–3 年": 50,
+        "3–5 年": 70,
+        "> 5 年": 90,
+    },
+    "Q40": {  # Average month-end bank balance (bank prefers 5-20% of deposits)
+        "几乎为零或负 (经常透支)": 10,
+        "< 5% 月入": 30,
+        "5–10% 月入": 50,
+        "10–20% 月入 (银行偏好区间)": 90,  # bank sweet spot — top score
+        "> 20% 月入": 70,                 # excessive idle cash, slightly below sweet spot
+    },
+    "Q41": {  # Gearing ratio (total borrowings / equity, bank red-line >3.0x)
+        "> 3.0x (违反银行准则)": 10,
+        "2.0–3.0x": 30,
+        "1.0–2.0x": 50,
+        "0.5–1.0x": 70,
+        "< 0.5x 或无借贷": 90,
+    },
+    "Q42": {  # DSCR (EBITDA / annual borrowing commitments, bank red-line <1.0x)
+        "< 1.0x (无法覆盖偿债)": 10,
+        "1.0–1.25x (勉强覆盖)": 30,
+        "1.25–1.5x": 50,
+        "1.5–2.0x": 70,
+        "> 2.0x (强偿债能力)": 90,
+    },
+    "Q43": {  # Latest shareholder equity (absolute scale)
+        "负值 (技术性资不抵债)": 10,
+        "< RM 50 万": 30,
+        "RM 50 万 – 200 万": 50,
+        "RM 200 万 – 1000 万": 70,
+        "> RM 1000 万": 90,
+    },
+    "Q44": {  # CCRIS / late-payment record
+        "经常迟缴 / CCRIS 不良记录": 10,
+        "近 12 个月内有迟缴": 30,
+        "近 12 个月无迟缴，更早曾有": 50,
+        "近 24 个月无迟缴": 70,
+        "从未迟缴": 90,
+    },
+    "Q45": {  # Revenue & profit trend (bank requires uptrend or stable)
+        "双双下降": 10,
+        "波动较大，无明显趋势": 30,
+        "大致持平": 50,
+        "稳定增长": 70,
+        "持续高速增长": 90,
+    },
+
     # ══ Block F: Exit + Listing (Q33-Q34) ══════════════════════════════════
     "Q33": {  # 退出方向 (5 options)
         "长期经营，不谈退出": 10,
@@ -319,13 +402,32 @@ MODULES = {
     4: {
         "name_zh": "融资结构",
         "name_en": "Financing",
+        # V2.1: financing now combines equity-readiness (E1, Q26-Q32) and
+        # bank-loan-readiness (E2, Q36-Q45) into a single module score.
+        # Weight split is 50/50 — the two pathways are equally important
+        # and orthogonal (most SMEs need both at different stages).
+        # Within each half, weights mirror the bank's emphasis (DSCR + CCRIS
+        # heaviest on the loan side; equity clarity + financial standardization
+        # heaviest on the equity side).
         "questions": {
-            "Q26": 0.25,   # Equity structure (raised: readiness > intent)
-            "Q27": 0.10,   # Shareholder type (lowered per client)
-            "Q28": 0.30,   # Financial standardization (raised: key readiness indicator)
-            "Q29": 0.05,   # Capital action intent (lowered: intent ≠ capability)
-            "Q30": 0.05,   # Fundraising timeline (lowered: intent ≠ capability)
-            "Q31": 0.25,   # Capital readiness (raised per client)
+            # E1 · Equity readiness — 50% of module (prior weights × 0.5)
+            "Q26": 0.125,  # Equity structure clarity
+            "Q27": 0.05,   # Shareholder type
+            "Q28": 0.15,   # Financial standardization (key readiness indicator)
+            "Q29": 0.025,  # Capital action intent (intent ≠ capability)
+            "Q30": 0.025,  # Fundraising timeline (intent ≠ capability)
+            "Q31": 0.125,  # Capital readiness
+            # E2 · SME Bank-Loan readiness — 50% of module
+            "Q36": 0.06,   # PBT margin
+            "Q37": 0.04,   # Credit-card utilisation
+            "Q38": 0.05,   # Ongoing legal cases
+            "Q39": 0.03,   # Years incorporated (overlaps with Q01, lower weight)
+            "Q40": 0.05,   # Bank statement ending balance
+            "Q41": 0.06,   # Gearing ratio
+            "Q42": 0.07,   # DSCR (single most important bank metric)
+            "Q43": 0.04,   # Shareholder equity (absolute scale)
+            "Q44": 0.05,   # CCRIS / late-payment record
+            "Q45": 0.05,   # Revenue & profit trend
         },
     },
     5: {
@@ -472,7 +574,7 @@ def score_diagnostic(answers: dict) -> dict:
     """
     # 1. Score individual questions
     question_scores: dict[str, float] = {}
-    for q_num in range(1, 35):
+    for q_num in range(1, 46):
         qid = f"Q{q_num:02d}"
         if qid in ("Q03", "Q32"):
             continue  # classification only
@@ -706,7 +808,12 @@ SECTION_QUESTIONS: dict[str, list[str]] = {
     "b": ["Q09", "Q10", "Q11", "Q12", "Q13"],
     "c": ["Q14", "Q15", "Q16", "Q17", "Q18", "Q19", "Q20"],
     "d": ["Q21", "Q22", "Q23", "Q24", "Q25"],
-    "e": ["Q26", "Q27", "Q28", "Q29", "Q30", "Q31", "Q32"],
+    "e": [
+        # E1 · Equity readiness
+        "Q26", "Q27", "Q28", "Q29", "Q30", "Q31", "Q32",
+        # E2 · SME Bank-Loan readiness
+        "Q36", "Q37", "Q38", "Q39", "Q40", "Q41", "Q42", "Q43", "Q44", "Q45",
+    ],
     "f": ["Q33", "Q34", "Q35"],
 }
 
@@ -817,6 +924,7 @@ def _detect_section_findings(
             })
 
     elif section_key == "e":
+        # ── E1 · Equity readiness findings ──────────────────────────────
         q27 = scores.get("Q27", 50)
         if q27 <= 30:
             findings.append({
@@ -834,6 +942,136 @@ def _detect_section_findings(
                 "title_zh": "融资准备与时间线不匹配", "title_en": "Financing Preparation Mismatched with Timeline",
                 "description_zh": "融资时间线较紧迫但融资材料准备不足，建议立即启动BP和融资材料的系统化整理。",
                 "description_en": "Fundraising timeline is urgent but preparation materials are insufficient. Start BP and material preparation immediately.",
+                "module": 4,
+            })
+
+        # ── E2 · SME Bank-Loan red-flag findings ────────────────────────
+        # These mirror the bank's 5 core SME-loan criteria. Each red-line
+        # answer fires a specific high-severity finding so the customer sees
+        # an actionable card even if the AI narrative misses it.
+        q37 = scores.get("Q37", 50)
+        if q37 <= 10:  # credit-card utilisation > 70% → bank red-line
+            findings.append({
+                "type": "bottleneck", "severity": "high",
+                "title_zh": "董事信用卡使用率超过 70%（银行红线）",
+                "title_en": "Director Credit-Card Utilisation Above 70% (Bank Red-Line)",
+                "description_zh": "银行将此视为个人现金流压力的直接信号，会直接拒批。建议在递件前 3–6 个月将所有持卡余额降到额度 30% 以下，并保留至少 2 个月对账单证明。",
+                "description_en": "Banks treat this as a direct signal of personal cash-flow stress and will reject the application. Bring every card below 30% utilisation 3–6 months before submission and retain ≥2 months of statements as proof.",
+                "module": 4,
+            })
+
+        q38 = scores.get("Q38", 50)
+        if q38 <= 30:  # ongoing legal cases (company or director)
+            findings.append({
+                "type": "bottleneck", "severity": "high",
+                "title_zh": "公司或董事存在进行中的法律诉讼",
+                "title_en": "Active Legal Cases Against Company or Directors",
+                "description_zh": "银行 CTOS/法务尽调阶段会直接发现并拒批。建议先咨询律师评估和解或撤诉路径，结案后再申请；如果是商业纠纷，准备一份独立的解释信和担保文件。",
+                "description_en": "Banks discover this during CTOS/legal due diligence and reject outright. Consult counsel on settlement or dismissal first, then apply post-resolution; for commercial disputes, prepare a separate explanation letter and indemnity.",
+                "module": 4,
+            })
+
+        q41 = scores.get("Q41", 50)
+        if q41 <= 10:  # gearing > 3.0x — fails bank's gearing test
+            findings.append({
+                "type": "bottleneck", "severity": "high",
+                "title_zh": "资产负债率超过 3.0 倍（违反银行准则）",
+                "title_en": "Gearing Ratio Above 3.0x (Fails Bank Criterion)",
+                "description_zh": "银行硬性要求资产负债率 < 3.0x。建议（1）注资增加股东权益，（2）将部分股东借款转为股本，（3）偿还高息短期借贷压低分子；任一动作落实后再递件。",
+                "description_en": "Banks require gearing < 3.0x. Options: (1) inject capital to raise equity, (2) convert shareholder loans to equity, (3) pay down high-interest short-term debt to lower the numerator. Apply only after one of these is in place.",
+                "module": 4,
+            })
+
+        q42 = scores.get("Q42", 50)
+        if q42 <= 30:  # DSCR < 1.25x — barely or cannot cover debt service
+            sev = "high" if q42 <= 10 else "medium"
+            findings.append({
+                "type": "bottleneck", "severity": sev,
+                "title_zh": "DSCR 低于 1.25 倍（偿债能力不足）",
+                "title_en": "DSCR Below 1.25x (Insufficient Debt-Service Capacity)",
+                "description_zh": "DSCR = EBITDA ÷ 年度偿债，银行最低 1.0x，安全 1.5x+。建议（1）压低偿债分母——延长还款期或合并贷款，（2）抬高 EBITDA 分子——剥离亏损业务、提高毛利。先把 DSCR 拉到 1.5x 再申请新贷款。",
+                "description_en": "DSCR = EBITDA ÷ annual debt service; bank floor is 1.0x, comfortable is 1.5x+. Either lower the denominator (extend tenure, consolidate loans) or raise EBITDA (cut loss-making lines, lift margin). Get DSCR to 1.5x before requesting new facilities.",
+                "module": 4,
+            })
+
+        q43 = scores.get("Q43", 50)
+        if q43 <= 10:  # negative equity — technical insolvency
+            findings.append({
+                "type": "bottleneck", "severity": "high",
+                "title_zh": "股东权益为负（技术性资不抵债）",
+                "title_en": "Negative Shareholder Equity (Technically Insolvent)",
+                "description_zh": "账面已资不抵债，银行视为最高风险。先做股东注资或债转股将权益翻正，同步审计公司，否则任何贷款申请都会被驳回。",
+                "description_en": "The company is technically insolvent on paper — banks treat this as the highest risk tier. Inject capital or convert debt to equity to flip equity positive, and run a fresh audit. Otherwise every loan application will be rejected.",
+                "module": 4,
+            })
+
+        q44 = scores.get("Q44", 50)
+        if q44 <= 10:  # CCRIS adverse / frequent late — bank red-line
+            findings.append({
+                "type": "bottleneck", "severity": "high",
+                "title_zh": "现有借贷频繁迟缴 / CCRIS 不良记录",
+                "title_en": "Frequent Late Payments / Adverse CCRIS Record",
+                "description_zh": "CCRIS 不良记录是银行最关键的拒批信号之一。建议（1）立刻清算所有逾期，（2）保持至少 12 个月按时还款记录后再申请，（3）期间避免任何新增贷款查询。这一项无法绕过，只能用时间修复。",
+                "description_en": "Adverse CCRIS is one of the strongest auto-reject signals. (1) Clear every overdue immediately, (2) maintain ≥12 months of on-time payments before reapplying, (3) avoid any new credit enquiries in that window. This cannot be shortcut — only time fixes it.",
+                "module": 4,
+            })
+        elif q44 <= 30:  # late within last 12 months — recoverable but flagged
+            findings.append({
+                "type": "gap", "severity": "medium",
+                "title_zh": "近 12 个月内有迟缴记录",
+                "title_en": "Late Payment Within Last 12 Months",
+                "description_zh": "近期迟缴会显著降低批贷概率，但比 CCRIS 不良记录可挽救。建议（1）从现在起严格按时还款，建立 12 个月清白记录，（2）若是单次错过且有合理理由，准备书面说明附在申请中，（3）避免短期内多次贷款查询拉低评分。",
+                "description_en": "Recent late payments significantly lower approval probability but are recoverable (unlike adverse CCRIS). (1) Maintain strict on-time payments to build a 12-month clean record, (2) if it was a one-off with a justifiable reason, attach a written explanation, (3) avoid multiple credit enquiries that further depress the score.",
+                "module": 4,
+            })
+
+        q45 = scores.get("Q45", 50)
+        if q45 <= 10:  # revenue & profit declining — fails bank trend criterion
+            findings.append({
+                "type": "bottleneck", "severity": "high",
+                "title_zh": "营收和利润处于下降趋势（违反银行准则）",
+                "title_en": "Revenue & Profit on a Decline (Fails Bank Criterion)",
+                "description_zh": "银行准则明确要求营收/利润上升或稳定。下降趋势会被视为生意走下坡的信号。建议（1）找到下滑根源（行业、竞争、产品老化）并先稳住，（2）至少做出 2 个连续季度的回升数据再申请，（3）申请时附上回升解释和未来 12 个月的现金流预测。",
+                "description_en": "The bank explicitly requires uptrend or stable revenue/profit. A decline signals a business in deterioration. (1) Diagnose the root cause (industry, competition, product) and stabilise first, (2) build at least 2 consecutive quarters of recovery data before applying, (3) attach a recovery narrative and 12-month forward cash-flow projection with the application.",
+                "module": 4,
+            })
+
+        q40 = scores.get("Q40", 50)
+        if q40 <= 10:  # near-zero / overdrawn ending balance
+            findings.append({
+                "type": "bottleneck", "severity": "high",
+                "title_zh": "银行月结单月末余额接近零或经常透支",
+                "title_en": "Near-Zero or Overdrawn Bank Statement Ending Balance",
+                "description_zh": "银行调阅 6 个月流水时若月末经常归零或透支，会直接判定现金流不健康。建议在申请前 6 个月开始保留每月入账的 5–20% 作为月末余额，避免任何退票或透支。",
+                "description_en": "When banks pull 6 months of statements and see chronically zero or overdrawn ending balances, they conclude cash flow is unhealthy. Starting 6 months pre-application, hold 5–20% of monthly deposits as ending balance and avoid any bounced cheques or overdrafts.",
+                "module": 4,
+            })
+
+        q39 = scores.get("Q39", 50)
+        if q39 <= 10:  # incorporated < 1 year — below bank minimum
+            findings.append({
+                "type": "gap", "severity": "high",
+                "title_zh": "公司注册不满 1 年（低于银行最低要求）",
+                "title_en": "Company Incorporated < 1 Year (Below Bank Minimum)",
+                "description_zh": "几乎所有 SME 银行贷款要求营业满 1 年以上。在此之前可考虑（1）股东个人贷款，（2）信用卡 / 透支额度，（3）政府担保的早期 SME 计划（如 BSN、TEKUN），（4）等待并积累 12 个月银行流水后再申请正式 SME 贷款。",
+                "description_en": "Nearly all SME bank loans require 1+ year of operations. Until then consider: (1) shareholder personal loans, (2) credit card / overdraft facilities, (3) government-backed early-stage SME schemes (BSN, TEKUN), (4) wait and accumulate 12 months of bank statements before applying for formal SME loans.",
+                "module": 4,
+            })
+
+        # ── E2 · Strength when bank-loan readiness is genuinely strong ──
+        if (
+            scores.get("Q42", 0) >= 70    # DSCR ≥ 1.5x
+            and scores.get("Q41", 0) >= 70  # gearing < 1.0x
+            and scores.get("Q44", 0) >= 70  # 24+ months clean
+            and scores.get("Q45", 0) >= 70  # revenue/profit uptrend
+            and scores.get("Q43", 0) >= 50  # equity ≥ RM 500K
+        ):
+            findings.append({
+                "type": "strength", "severity": "low",
+                "title_zh": "银行 SME 贷款已具备申请条件",
+                "title_en": "Bank-Loan-Ready by SME Underwriting Standards",
+                "description_zh": "DSCR、资产负债率、CCRIS、营收趋势、股东权益均通过银行核心准则。建议在 3 个月内主动接洽 2–3 家银行做利率比价，把杠杆用在扩张而不是补现金流。",
+                "description_en": "DSCR, gearing, CCRIS, revenue trend, and equity all clear the bank's core thresholds. Approach 2–3 banks within 3 months to compare rates and deploy the leverage for expansion rather than cash-flow patching.",
                 "module": 4,
             })
 
@@ -857,7 +1095,7 @@ def score_section(answers: dict, section_key: str) -> dict:
     """
     # Score all available questions
     question_scores: dict[str, float] = {}
-    for q_num in range(1, 35):
+    for q_num in range(1, 46):
         qid = f"Q{q_num:02d}"
         if qid in ("Q03", "Q32"):
             continue
