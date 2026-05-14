@@ -4,7 +4,9 @@ Scoring engine for the V2.1 45-question Unicorn Diagnostic Questionnaire.
 Maps answers to 6 module scores + overall score + enterprise stage classification.
 
 V2.1 changes (over V2):
-- 45 questions (Q01-Q35 + Q36-Q45) — adds 10 SME bank-loan readiness questions
+- 46 questions (Q01-Q35 + Q36-Q45 + Q46) — Q36-Q45 add SME bank-loan
+  readiness inside Section E; Q46 is a classification-only customer-type
+  question (B2B / B2C / Both / B2G) inside Section C.
   inside Section E, mapped to bank underwriting metrics (DSCR, gearing, CCRIS,
   bank statements, revenue/profit trend).
 - Block E now has two sub-blocks: E1 equity readiness (Q26-Q32, unchanged) and
@@ -28,6 +30,7 @@ from decimal import Decimal
 # Q03 is classification only (industry), no score.
 # Q32 is classification only (biggest obstacle), no score.
 # Q35 is multi-select for report personalization, no score.
+# Q46 is classification only (customer type — B2B/B2C), no score.
 
 # Client requirement: standardized scoring ladder
 # 5-option questions: 10 / 30 / 50 / 70 / 90
@@ -54,12 +57,12 @@ SCORE_MAP: dict[str, dict[str, int]] = {
     },
     # Q03 is industry classification — no scoring
     "Q04": {  # 年营收区间 (6 options → 10/25/40/60/75/90)
-        "还没有稳定营收": 10,
-        "100万以下": 25,
-        "100万–500万": 40,
-        "500万–3000万": 60,
-        "3000万–1亿": 75,
-        "1亿以上": 90,
+        "5M 以下": 10,
+        "5M–10M": 25,
+        "10M–30M": 40,
+        "30M–50M": 60,
+        "50M–100M": 75,
+        "100M 以上": 90,
     },
     "Q05": {  # 经营利润状态 (5 options)
         "还在亏损": 10,
@@ -82,12 +85,13 @@ SCORE_MAP: dict[str, dict[str, int]] = {
         "正在扩张": 70,
         "正在准备融资/资本动作": 90,
     },
-    "Q08": {  # 企业更大目标 (5 options)
+    "Q08": {  # 企业更大目标 (6 options → 10/25/40/60/75/90)
         "先活下来": 10,
-        "先稳定盈利": 30,
-        "先复制扩张": 50,
-        "先做高估值逻辑": 70,
-        "先进入融资/资本路径": 90,
+        "先稳定盈利": 25,
+        "先复制扩张": 40,
+        "先做高估值逻辑": 60,
+        "先进入融资/资本路径": 75,
+        "准备规划上市路径": 90,
     },
 
     # ══ Block B: Gene Structure (Q09-Q13) ═══════════════════════════════════
@@ -343,12 +347,14 @@ SCORE_MAP: dict[str, dict[str, int]] = {
     },
 
     # ══ Block F: Exit + Listing (Q33-Q34) ══════════════════════════════════
-    "Q33": {  # 退出方向 (5 options)
+    "Q33": {  # 退出方向 (7 options — IPO direction split by target market, all top-tier)
         "长期经营，不谈退出": 10,
         "未来股权交易": 30,
         "未来兼并收购": 50,
         "未来融资后再退出": 70,
-        "未来上市退出": 90,
+        "未来美国上市": 90,
+        "未来马来西亚上市": 90,
+        "未来香港上市": 90,
     },
     "Q34": {  # 上市准备状态 (5 options)
         "还非常早，不应现在讨论": 10,
@@ -574,9 +580,9 @@ def score_diagnostic(answers: dict) -> dict:
     """
     # 1. Score individual questions
     question_scores: dict[str, float] = {}
-    for q_num in range(1, 46):
+    for q_num in range(1, 47):
         qid = f"Q{q_num:02d}"
-        if qid in ("Q03", "Q32"):
+        if qid in ("Q03", "Q32", "Q46"):
             continue  # classification only
         answer = answers.get(qid)
         score = _get_answer_score(qid, answer)
@@ -645,6 +651,7 @@ def score_diagnostic(answers: dict) -> dict:
         "key_findings": key_findings,
         "industry": answers.get("Q03", ""),
         "biggest_obstacle": answers.get("Q32", ""),
+        "customer_type": answers.get("Q46", ""),
         "report_focus": answers.get("Q35", []),
     }
 
@@ -806,7 +813,7 @@ SECTION_MODULE_MAP: dict[str, list[int]] = {
 SECTION_QUESTIONS: dict[str, list[str]] = {
     "a": ["Q01", "Q02", "Q03", "Q04", "Q05", "Q06", "Q07", "Q08"],
     "b": ["Q09", "Q10", "Q11", "Q12", "Q13"],
-    "c": ["Q14", "Q15", "Q16", "Q17", "Q18", "Q19", "Q20"],
+    "c": ["Q14", "Q46", "Q15", "Q16", "Q17", "Q18", "Q19", "Q20"],
     "d": ["Q21", "Q22", "Q23", "Q24", "Q25"],
     "e": [
         # E1 · Equity readiness
@@ -1095,9 +1102,9 @@ def score_section(answers: dict, section_key: str) -> dict:
     """
     # Score all available questions
     question_scores: dict[str, float] = {}
-    for q_num in range(1, 46):
+    for q_num in range(1, 47):
         qid = f"Q{q_num:02d}"
-        if qid in ("Q03", "Q32"):
+        if qid in ("Q03", "Q32", "Q46"):
             continue
         answer = answers.get(qid)
         score = _get_answer_score(qid, answer)

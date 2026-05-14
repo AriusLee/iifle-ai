@@ -14,9 +14,10 @@ from app.models.diagnostic import Diagnostic
 from app.models.report import Report, ReportSection, ReportLanguage, ReportStatus, ReportType
 from app.services.ai.provider import get_ai_client
 from app.services.diagnostic.listing_requirements import (
+    pick_highlight_from_q33,
     pick_tiers_for_stage,
     render_markdown_comparison,
-    to_dict as listing_pair_to_dict,
+    to_dict as listing_tiers_to_dict,
 )
 
 logger = logging.getLogger(__name__)
@@ -73,8 +74,8 @@ DIAGNOSTIC_SECTIONS = [
     },
     {
         "key": "listing_requirements",
-        "title_en": "Listing Requirements — Bursa SC vs US SEC",
-        "title_cn": "上市要求对比 — 马来西亚 SC 与 美国 SEC",
+        "title_en": "Listing Requirements — MY · HK · US",
+        "title_cn": "上市要求对比 — 马来西亚 · 香港 · 美国",
         "sort_order": 8,
     },
     {
@@ -111,7 +112,7 @@ Country: {company.country}
             context += f"- Module {mod_num} ({mod.get('name_zh', '')}/{mod.get('name_en', '')}): {mod.get('score', 'N/A')}/100 — {mod.get('rating', 'N/A')}\n"
 
     context += "\n## Questionnaire Answers\n"
-    for q_num in range(1, 46):
+    for q_num in range(1, 47):
         qid = f"Q{q_num:02d}"
         answer = answers.get(qid)
         if answer:
@@ -253,19 +254,22 @@ One-line explanation of why.
 Be honest in your ratings — most early-stage companies will be "Low" or "Not Ready" in most categories. Do not inflate ratings to be polite.
 200-300 words in Chinese, 80-120 in English.""",
 
-        "listing_requirements": """Write a SHORT narrative commentary (NOT the table — the table will be appended automatically) introducing the side-by-side listing requirements comparison.
+        "listing_requirements": """Write a SHORT narrative commentary (NOT the table — the table will be appended automatically) introducing the side-by-side listing requirements comparison across THREE markets: Bursa Malaysia (SC), HKEX (SFC), and NASDAQ (SEC).
+
+You will be told (via the Selected Tier Set block in the context) which jurisdiction the founder picked as their preferred listing market (from their Q33 退出方向 answer). Anchor your commentary around that preferred market while still using the other two as benchmarks.
 
 Structure your commentary in 3 short paragraphs:
 
-1. **为什么对比这两个市场 (Why these two markets)** — 1 short paragraph explaining why we benchmark against Bursa Malaysia (SC) and US NASDAQ (SEC) for THIS company. Reference the company's stage, ambition, and any signal from their answers about geographic / capital ambitions.
+1. **为什么对比这三个市场 (Why these three markets)** — 1 short paragraph explaining why we benchmark against MY · HK · US for THIS company. Lead with the founder's preferred market (if one was picked) and explain why it fits their stage and ambition. Mention how the other two serve as useful contrast.
 
-2. **对该企业的现实意义 (What this means for them)** — 1 short paragraph that grounds the comparison in the company's actual situation. Reference their REAL revenue, profit status, team size, and equity structure. Be specific about which thresholds they are far from, close to, or already meet. Do NOT invent numbers.
+2. **对该企业的现实意义 (What this means for them)** — 1 short paragraph that grounds the comparison in the company's actual situation. Reference their REAL revenue, profit status, team size, and equity structure. Be specific about which thresholds they are far from, close to, or already meet, ESPECIALLY for the preferred market. Do NOT invent numbers.
 
-3. **下一步重点 (Where to focus next)** — 1 short paragraph naming the 2-3 highest-leverage gaps to close if they want to credibly approach EITHER market in the next 24-36 months.
+3. **下一步重点 (Where to focus next)** — 1 short paragraph naming the 2-3 highest-leverage gaps to close if they want to credibly approach the preferred market in the next 24-36 months. Briefly note whether the other two markets become more or less viable as those gaps close.
 
 CRITICAL:
-- Do NOT generate a table — a deterministic comparison table will be appended automatically.
+- Do NOT generate a table — a deterministic 3-column comparison table will be appended automatically.
 - Do NOT invent specific listing rule numbers — refer to thresholds in general terms (e.g. "the profit threshold", "the public float requirement"). The accurate numbers live in the appended table.
+- If the founder picked a specific market (HK / MY / US), NAME IT and orient the analysis around it. Do not default to "Bursa vs NASDAQ" framing.
 - Reference the company's actual data points from the questionnaire context.
 - Tone: senior consultant, direct, no boilerplate.
 - 200-300 words in Chinese, 80-120 in English.""",
@@ -414,7 +418,8 @@ FORMAT:
         dict — never raises (errors are captured into the dict)."""
         async with sem:
             section_prompt = _get_section_prompt(section_def["key"])
-            listing_pair = None
+            listing_tiers = None
+            listing_highlight = None
             section_user_prompt = (
                 f"Section: {section_def['title_cn']} / {section_def['title_en']}\n\n"
                 f"{section_prompt}\n\n"
@@ -422,14 +427,26 @@ FORMAT:
             )
 
             if section_def["key"] == "listing_requirements":
-                listing_pair = pick_tiers_for_stage(diagnostic.enterprise_stage)
+                listing_tiers = pick_tiers_for_stage(diagnostic.enterprise_stage)
+                q33_answer = (diagnostic.answers or {}).get("Q33")
+                listing_highlight = pick_highlight_from_q33(q33_answer)
+                preferred_label = {
+                    "MY": "Bursa Malaysia (SC)",
+                    "HK": "HKEX (SFC)",
+                    "US": "NASDAQ / NYSE (SEC)",
+                }.get(listing_highlight or "", "Not specified — founder did not pick a listing market in Q33")
                 section_user_prompt += (
-                    "\n\n## Selected Tier Pair (auto-picked from enterprise stage)\n"
-                    f"- Malaysia (SC): {listing_pair.my.board_zh} / {listing_pair.my.board_en}\n"
-                    f"- United States (SEC): {listing_pair.us.board_zh} / {listing_pair.us.board_en}\n"
-                    f"- Rationale (zh): {listing_pair.rationale_zh}\n"
-                    f"- Rationale (en): {listing_pair.rationale_en}\n"
-                    "\nIMPORTANT: Use the tier names above in your commentary, but do NOT reproduce the criteria — they will be appended as a table automatically.\n"
+                    "\n\n## Selected Tier Set (auto-picked from enterprise stage)\n"
+                    f"- Malaysia (SC): {listing_tiers.my.board_zh} / {listing_tiers.my.board_en}\n"
+                    f"- Hong Kong (SFC): {listing_tiers.hk.board_zh} / {listing_tiers.hk.board_en}\n"
+                    f"- United States (SEC): {listing_tiers.us.board_zh} / {listing_tiers.us.board_en}\n"
+                    f"- Rationale (zh): {listing_tiers.rationale_zh}\n"
+                    f"- Rationale (en): {listing_tiers.rationale_en}\n"
+                    f"\n## Founder's Preferred Listing Market (from Q33)\n"
+                    f"- Q33 answer: {q33_answer or 'not answered'}\n"
+                    f"- Mapped jurisdiction: {listing_highlight or 'none — fall back to neutral 3-way comparison'}\n"
+                    f"- Preferred market to anchor analysis: {preferred_label}\n"
+                    "\nIMPORTANT: Use the tier names above in your commentary, but do NOT reproduce the criteria — they will be appended as a 3-column table automatically. Anchor the narrative around the founder's preferred market if one was specified.\n"
                 )
 
             try:
@@ -440,17 +457,18 @@ FORMAT:
                 )
                 content_cn, content_en = _parse_bilingual(response)
 
-                if listing_pair is not None:
-                    table_cn = render_markdown_comparison(listing_pair, language="cn")
-                    table_en = render_markdown_comparison(listing_pair, language="en")
-                    content_cn = (content_cn or "").rstrip() + "\n\n### 上市要求对比表\n\n" + table_cn + "\n\n*以上为公开披露的上市规则参考摘要，实际申报需以交易所最新规定及保荐机构意见为准。*"
-                    content_en = (content_en or "").rstrip() + "\n\n### Listing Requirements Comparison\n\n" + table_en + "\n\n*Reference summary of publicly disclosed listing rules. Actual eligibility requires the latest exchange rules and sponsor advisory.*"
+                if listing_tiers is not None:
+                    table_cn = render_markdown_comparison(listing_tiers, language="cn", highlight=listing_highlight)
+                    table_en = render_markdown_comparison(listing_tiers, language="en", highlight=listing_highlight)
+                    content_cn = (content_cn or "").rstrip() + "\n\n### 上市要求对比表\n\n" + table_cn + "\n\n*⭐ 表示创始人在 Q33 中选择的目标市场。以上为公开披露的上市规则参考摘要，实际申报需以交易所最新规定及保荐机构意见为准。*"
+                    content_en = (content_en or "").rstrip() + "\n\n### Listing Requirements Comparison\n\n" + table_en + "\n\n*⭐ marks the founder's preferred listing market from Q33. Reference summary of publicly disclosed listing rules. Actual eligibility requires the latest exchange rules and sponsor advisory.*"
 
                 return {
                     "section_def": section_def,
                     "content_cn": content_cn,
                     "content_en": content_en,
-                    "listing_pair": listing_pair,
+                    "listing_tiers": listing_tiers,
+                    "listing_highlight": listing_highlight,
                     "ok": True,
                 }
             except Exception as exc:
@@ -479,8 +497,10 @@ FORMAT:
                 "module_scores": diagnostic.module_scores,
                 "overall_score": float(diagnostic.overall_score) if diagnostic.overall_score else None,
             }
-            if result["listing_pair"] is not None:
-                section_content_data["listing_pair"] = listing_pair_to_dict(result["listing_pair"])
+            if result.get("listing_tiers") is not None:
+                section_content_data["listing_tiers"] = listing_tiers_to_dict(
+                    result["listing_tiers"], highlight=result.get("listing_highlight")
+                )
 
             section = ReportSection(
                 report_id=report.id,

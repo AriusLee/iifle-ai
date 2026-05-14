@@ -4,18 +4,23 @@ Listing requirements reference data for the Unicorn Diagnostic Report.
 Mirrors the customer-facing TypeScript module at
 ``customer/src/lib/listing-requirements.ts`` and exposes the same tier
 auto-pick logic. Used by report_generator.py to embed deterministic
-side-by-side requirement tables (Bursa Malaysia SC vs US NASDAQ / SEC)
-into the diagnostic PDF — the numbers are hard-coded here, the AI only
-writes narrative commentary on top of them.
+side-by-side requirement tables (MY / HK / US) into the diagnostic PDF
+— the numbers are hard-coded here, the AI only writes narrative
+commentary on top of them.
 
-Tier pairs by enterprise stage:
-    概念萌芽期 / 初创探索期 / 模式验证期  →  ACE Market   +  NASDAQ Capital Market
-    规模扩张期                            →  Main Market  +  NASDAQ Global Market
-    资本进阶期                            →  Main Market  +  NASDAQ Global Select
+Tier sets by enterprise stage:
+    概念萌芽期 / 初创探索期 / 模式验证期  →  ACE Market   +  HKEX GEM         +  NASDAQ Capital
+    规模扩张期                            →  Main Market  +  HKEX Main Board  +  NASDAQ Global Market
+    资本进阶期                            →  Main Market  +  HKEX Main Board  +  NASDAQ Global Select
+
+The user's Q33 (退出方向) answer drives which column is highlighted as
+the customer's preferred listing market.
 """
 
 from dataclasses import dataclass
 from typing import Literal
+
+Jurisdiction = Literal["MY", "HK", "US"]
 
 
 @dataclass
@@ -48,8 +53,8 @@ CANONICAL_ROWS: list[tuple[str, str, str]] = [
 @dataclass
 class ListingTier:
     code: str
-    jurisdiction: Literal["MY", "US"]
-    regulator: Literal["SC", "SEC"]
+    jurisdiction: Jurisdiction
+    regulator: Literal["SC", "SFC", "SEC"]
     exchange_zh: str
     exchange_en: str
     board_zh: str
@@ -101,6 +106,53 @@ MAIN_MARKET = ListingTier(
         Criterion("reporting", "财务披露", "Financial Reporting", "上市前 3 年经审计财务报表（MFRS / IFRS）", "3 yrs of audited financial statements (MFRS / IFRS) prior to listing"),
     ],
 )
+
+# ── Hong Kong — HKEX tiers ────────────────────────────────────────────────────
+
+HKEX_GEM = ListingTier(
+    code="HKEX_GEM",
+    jurisdiction="HK",
+    regulator="SFC",
+    exchange_zh="香港交易所",
+    exchange_en="HKEX",
+    board_zh="GEM 创业板",
+    board_en="GEM (Growth Enterprise Market)",
+    tagline_zh="面向具备成长潜力的中小型企业，采用现金流测试，无强制盈利门槛。",
+    tagline_en="For high-growth SMEs. Cash-flow test in lieu of mandatory profit threshold.",
+    criteria=[
+        Criterion("profit", "盈利要求", "Profit Requirement", "无强制盈利要求", "No mandatory profit threshold"),
+        Criterion("revenue", "现金流测试", "Cash-Flow Test", "上市前 2 个财年合计经营现金流 ≥ HK$30M", "Aggregate positive operating cash flow ≥ HK$30M over 2 preceding financial years"),
+        Criterion("market_value", "上市时市值", "Market Cap at Listing", "≥ HK$150M", "≥ HK$150M"),
+        Criterion("history", "经营年限", "Operating History", "≥ 2 个财年同一管理层", "≥ 2 financial years under same management"),
+        Criterion("public_spread", "公众持股", "Public Float", "≥ 25% 已发行股本", "≥ 25% of issued share capital"),
+        Criterion("shareholders", "公众股东人数", "Public Shareholders", "≥ 100 名", "≥ 100 holders"),
+        Criterion("sponsor", "保荐人", "Sponsor", "必须委任 HKEX 授权保荐人", "HKEX-licensed sponsor required"),
+        Criterion("governance", "公司治理", "Corporate Governance", "≥ 3 名独立非执行董事（占 1/3 席位）+ 审计委员会", "≥ 3 INEDs (≥ 1/3 of board) + audit committee"),
+    ],
+)
+
+HKEX_MAIN = ListingTier(
+    code="HKEX_MAIN",
+    jurisdiction="HK",
+    regulator="SFC",
+    exchange_zh="香港交易所",
+    exchange_en="HKEX",
+    board_zh="主板（盈利测试）",
+    board_en="Main Board (Profit Test)",
+    tagline_zh="面向已实现稳定盈利的成熟企业，盈利、市值、治理三方面均有明确门槛。",
+    tagline_en="For mature, profitable companies. Hard thresholds on earnings, market cap, and governance.",
+    criteria=[
+        Criterion("profit", "盈利要求", "Profit Requirement", "过去 3 年累计税后利润 ≥ HK$80M，最近一年 ≥ HK$35M，前两年合计 ≥ HK$45M", "Aggregate PAT ≥ HK$80M over 3 yrs; latest yr ≥ HK$35M; sum of prior 2 yrs ≥ HK$45M"),
+        Criterion("market_value", "上市时市值", "Market Cap at Listing", "≥ HK$500M", "≥ HK$500M"),
+        Criterion("history", "经营年限", "Operating History", "≥ 3 个财年同一管理层", "≥ 3 financial years under same management"),
+        Criterion("public_spread", "公众持股", "Public Float", "≥ 25% 已发行股本（大市值企业可降至 15–25%）", "≥ 25% of issued share capital (15–25% allowed for large caps)"),
+        Criterion("shareholders", "公众股东人数", "Public Shareholders", "≥ 300 名", "≥ 300 holders"),
+        Criterion("sponsor", "保荐人", "Sponsor", "必须委任 HKEX 授权保荐人，至少提前 2 个月委任", "HKEX-licensed sponsor required, appointed ≥ 2 months before submission"),
+        Criterion("governance", "公司治理", "Corporate Governance", "≥ 3 名独立非执行董事（占 1/3 席位）+ 审计/提名/薪酬委员会", "≥ 3 INEDs (≥ 1/3 of board) + audit, nomination, remuneration committees"),
+        Criterion("reporting", "财务披露", "Financial Reporting", "上市前 3 年经审计财务报表（HKFRS / IFRS）+ 中期报告", "3 yrs of audited financial statements (HKFRS / IFRS) + interim reporting"),
+    ],
+)
+
 
 # ── United States — NASDAQ tiers ──────────────────────────────────────────────
 
@@ -171,77 +223,113 @@ NASDAQ_GLOBAL_SELECT = ListingTier(
 
 
 @dataclass
-class TierPair:
+class TierSet:
+    """Three-market tier set (MY / HK / US) auto-picked by enterprise stage."""
     my: ListingTier
+    hk: ListingTier
     us: ListingTier
     rationale_zh: str
     rationale_en: str
 
 
-_EARLY_PAIR = TierPair(
+_EARLY_SET = TierSet(
     my=ACE_MARKET,
+    hk=HKEX_GEM,
     us=NASDAQ_CAPITAL,
     rationale_zh=(
         "当前阶段企业以模式验证和稳定经营为重点，尚未达到主板/旗舰板的盈利门槛。"
-        "我们对标的是两个市场中「门槛最低的入门通道」——马来西亚 ACE 创业板和美国 NASDAQ Capital Market。"
+        "我们对标的是三个市场中「门槛最低的入门通道」——马来西亚 ACE 创业板、香港 GEM 创业板和美国 NASDAQ Capital Market。"
     ),
     rationale_en=(
         "At this stage the priority is model validation and stable operations — well before main-board / flagship-tier earnings thresholds. "
-        "We benchmark against the entry tier of each market: Bursa ACE Market and NASDAQ Capital Market."
+        "We benchmark against the entry tier of each market: Bursa ACE Market, HKEX GEM, and NASDAQ Capital Market."
     ),
 )
 
-_SCALING_PAIR = TierPair(
+_SCALING_SET = TierSet(
     my=MAIN_MARKET,
+    hk=HKEX_MAIN,
     us=NASDAQ_GLOBAL,
     rationale_zh=(
         "企业已进入规模扩张阶段，盈利与营收开始具备主板级潜力。"
-        "我们对标的是马来西亚主板（盈利测试）和美国 NASDAQ Global Market 中阶板。"
+        "我们对标的是马来西亚主板（盈利测试）、香港主板（盈利测试）和美国 NASDAQ Global Market 中阶板。"
     ),
     rationale_en=(
         "The company is scaling, with earnings and revenue approaching main-board territory. "
-        "We benchmark against Bursa Main Market (Profit Test) and NASDAQ Global Market."
+        "We benchmark against Bursa Main Market (Profit Test), HKEX Main Board (Profit Test), and NASDAQ Global Market."
     ),
 )
 
-_CAPITAL_READY_PAIR = TierPair(
+_CAPITAL_READY_SET = TierSet(
     my=MAIN_MARKET,
+    hk=HKEX_MAIN,
     us=NASDAQ_GLOBAL_SELECT,
     rationale_zh=(
-        "企业已具备资本化条件，可以认真评估两地最严苛的旗舰上市路径。"
-        "我们对标的是马来西亚主板和美国 NASDAQ Global Select 旗舰板。"
+        "企业已具备资本化条件，可以认真评估三地最严苛的旗舰上市路径。"
+        "我们对标的是马来西亚主板、香港主板和美国 NASDAQ Global Select 旗舰板。"
     ),
     rationale_en=(
-        "The company is capital-ready and can credibly evaluate flagship listing pathways in both markets. "
-        "We benchmark against Bursa Main Market and NASDAQ Global Select."
+        "The company is capital-ready and can credibly evaluate flagship listing pathways in all three markets. "
+        "We benchmark against Bursa Main Market, HKEX Main Board, and NASDAQ Global Select."
     ),
 )
 
 
-def pick_tiers_for_stage(stage: str | None) -> TierPair:
-    """Auto-pick the appropriate Bursa + NASDAQ tier pair based on enterprise stage."""
+def pick_tiers_for_stage(stage: str | None) -> TierSet:
+    """Auto-pick the appropriate MY + HK + US tier set based on enterprise stage."""
     s = stage or ""
     if "资本进阶" in s:
-        return _CAPITAL_READY_PAIR
+        return _CAPITAL_READY_SET
     if "规模扩张" in s:
-        return _SCALING_PAIR
-    return _EARLY_PAIR
+        return _SCALING_SET
+    return _EARLY_SET
 
 
-def render_markdown_comparison(pair: TierPair, language: str = "cn") -> str:
+# Q33 (退出方向) answer → preferred listing market. Used to highlight the
+# user's chosen column in the comparison table. Non-IPO answers (long-term,
+# equity transaction, M&A, fundraise-then-exit) return None — no highlight.
+_Q33_TO_JURISDICTION: dict[str, Jurisdiction] = {
+    "未来美国上市": "US",
+    "未来马来西亚上市": "MY",
+    "未来香港上市": "HK",
+}
+
+
+def pick_highlight_from_q33(q33_answer: str | None) -> Jurisdiction | None:
+    """Map the user's Q33 exit-direction answer to a jurisdiction to highlight."""
+    if not q33_answer:
+        return None
+    return _Q33_TO_JURISDICTION.get(q33_answer.strip())
+
+
+def render_markdown_comparison(
+    tiers: TierSet,
+    language: str = "cn",
+    highlight: Jurisdiction | None = None,
+) -> str:
     """
-    Render the picked tier pair as a side-by-side markdown table aligned by
-    canonical criterion key. Rows where one jurisdiction has no requirement
-    render as "—". The PDF generator's markdown 'tables' extension renders
-    this cleanly in the final report PDF.
+    Render the picked tier set as a side-by-side 3-column markdown table aligned by
+    canonical criterion key. Rows where no jurisdiction has data are skipped;
+    individual blank cells render as "—". The user's chosen market (from Q33)
+    is highlighted with a star and bolded header. The PDF generator's markdown
+    'tables' extension renders this cleanly in the final report PDF.
     """
     is_cn = language == "cn"
-    my_header = pair.my.board_zh if is_cn else pair.my.board_en
-    us_header = pair.us.board_zh if is_cn else pair.us.board_en
     col_header = "对比项" if is_cn else "Criterion"
 
-    my_by_key = {c.key: c for c in pair.my.criteria}
-    us_by_key = {c.key: c for c in pair.us.criteria}
+    def header(t: ListingTier, flag: str) -> str:
+        name = t.board_zh if is_cn else t.board_en
+        if highlight == t.jurisdiction:
+            return f"⭐ {flag} **{name}**"
+        return f"{flag} {name}"
+
+    my_header = header(tiers.my, "🇲🇾")
+    hk_header = header(tiers.hk, "🇭🇰")
+    us_header = header(tiers.us, "🇺🇸")
+
+    my_by_key = {c.key: c for c in tiers.my.criteria}
+    hk_by_key = {c.key: c for c in tiers.hk.criteria}
+    us_by_key = {c.key: c for c in tiers.us.criteria}
 
     def val(c: Criterion | None) -> str:
         if c is None:
@@ -249,22 +337,23 @@ def render_markdown_comparison(pair: TierPair, language: str = "cn") -> str:
         return c.value_zh if is_cn else c.value_en
 
     lines: list[str] = []
-    lines.append(f"| {col_header} | 🇲🇾 {my_header} | 🇺🇸 {us_header} |")
-    lines.append("| --- | --- | --- |")
+    lines.append(f"| {col_header} | {my_header} | {hk_header} | {us_header} |")
+    lines.append("| --- | --- | --- | --- |")
     for key, label_zh, label_en in CANONICAL_ROWS:
         my_c = my_by_key.get(key)
+        hk_c = hk_by_key.get(key)
         us_c = us_by_key.get(key)
-        # Skip rows where neither side has data
-        if my_c is None and us_c is None:
+        # Skip rows where no jurisdiction has data
+        if my_c is None and hk_c is None and us_c is None:
             continue
         label = label_zh if is_cn else label_en
-        lines.append(f"| **{label}** | {val(my_c)} | {val(us_c)} |")
+        lines.append(f"| **{label}** | {val(my_c)} | {val(hk_c)} | {val(us_c)} |")
 
     return "\n".join(lines)
 
 
-def to_dict(pair: TierPair) -> dict:
-    """Serialize a tier pair into a JSON-safe dict for content_data storage."""
+def to_dict(tiers: TierSet, highlight: Jurisdiction | None = None) -> dict:
+    """Serialize a tier set into a JSON-safe dict for content_data storage."""
     def tier_dict(t: ListingTier) -> dict:
         return {
             "code": t.code,
@@ -288,8 +377,10 @@ def to_dict(pair: TierPair) -> dict:
         }
 
     return {
-        "my": tier_dict(pair.my),
-        "us": tier_dict(pair.us),
-        "rationale_zh": pair.rationale_zh,
-        "rationale_en": pair.rationale_en,
+        "my": tier_dict(tiers.my),
+        "hk": tier_dict(tiers.hk),
+        "us": tier_dict(tiers.us),
+        "highlight": highlight,
+        "rationale_zh": tiers.rationale_zh,
+        "rationale_en": tiers.rationale_en,
     }

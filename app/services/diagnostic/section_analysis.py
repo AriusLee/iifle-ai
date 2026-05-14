@@ -51,6 +51,7 @@ QUESTION_TEXT: dict[str, tuple[str, str]] = {
     "Q18": ("客户复购/转介绍", "Customer retention & referrals"),
     "Q19": ("客户来源结构", "Customer acquisition channels"),
     "Q20": ("已验证的增长信号", "Validated growth signals"),
+    "Q46": ("客户类型 (B2B/B2C)", "Customer type (B2B/B2C)"),
     "Q21": ("增长方式", "Growth method"),
     "Q22": ("市场机会规模", "Market opportunity scale"),
     "Q23": ("资金优先投入方向", "Capital priority allocation"),
@@ -245,8 +246,8 @@ C. 银行红线（DSCR < 1.0x、资产负债率 > 3.0x、CCRIS 不良、信用�
     return f"""根据以下企业诊断数据，撰写一份针对该模块的简明分析报告。
 
 【硬性要求 / Hard Requirements】
-1. 必须引用企业的"实际回答内容"——例如"团队仅5人以下"、"年营收100万–500万"、"客户主要靠创始人人脉"。不要写空泛的话。
-   You MUST reference the company's ACTUAL answers (e.g. "team under 5 people", "revenue 1M–5M", "customers come mainly from founder's network"). No generic platitudes.
+1. 必须引用企业的"实际回答内容"——例如"团队仅5人以下"、"年营收 5M–10M"、"客户主要靠创始人人脉"。不要写空泛的话。
+   You MUST reference the company's ACTUAL answers (e.g. "team under 5 people", "revenue 5M–10M", "customers come mainly from founder's network"). No generic platitudes.
 2. 不要提及"问卷"、"评分"、"Q01/Q07"等技术词汇。读者不应该知道这是从问卷生成的。
    Do NOT mention "questionnaire", "Q01", "scoring", etc. The reader should not know this came from a form.
 3. 必须遵守"分析视角"和"阶段语调指引"——不要给一个早期企业谈融资细节。
