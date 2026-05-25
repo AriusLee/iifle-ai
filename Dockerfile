@@ -3,10 +3,10 @@ FROM python:3.12-slim-bookworm
 WORKDIR /app
 
 # Install system dependencies for weasyprint and other packages.
-# fonts-noto-cjk provides "Noto Sans CJK SC" / "Noto Serif CJK SC" so
-# WeasyPrint can render Chinese text — without it CJK glyphs come out blank
-# (the slim base image ships no CJK fonts). fontconfig is needed so Pango
-# can discover the installed fonts.
+# Chinese fonts are NOT installed here — WeasyPrint loads the bundled SC fonts
+# in app/assets/fonts/ via @font-face instead (the system fonts-noto-cjk
+# super-collection is 110 MB+ and made CJK rendering take minutes). fontconfig
+# is kept so Pango can still discover the base Latin fonts.
 RUN apt-get update -y && apt-get install -y --no-install-recommends \
     build-essential \
     libpango-1.0-0 \
@@ -15,8 +15,6 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends \
     libffi-dev \
     libcairo2 \
     fontconfig \
-    fonts-noto-cjk \
-    && fc-cache -f \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy all source code first, then install

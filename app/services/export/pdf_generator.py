@@ -76,6 +76,43 @@ def _logo_data_url() -> str:
 _LOGO_DATA_URL = _logo_data_url()
 
 
+# Bundled Simplified-Chinese fonts (single language, single weight each — see
+# app/assets/fonts/). We load these via @font-face instead of the system
+# `fonts-noto-cjk` super-collection (110 MB+, packs SC/TC/JP/KR) because
+# subsetting that giant file on a small instance took minutes. These SC-only
+# OTFs are ~8–12 MB, so the render takes seconds and is identical in dev/prod.
+_FONTS_DIR = Path(__file__).resolve().parents[2] / "assets" / "fonts"
+
+_FONT_FACES = (
+    ("Noto Sans SC", "normal", "NotoSansSC-Regular.otf"),
+    ("Noto Sans SC", "bold", "NotoSansSC-Bold.otf"),
+    ("Noto Serif SC", "normal", "NotoSerifSC-Regular.otf"),
+    ("Noto Serif SC", "bold", "NotoSerifSC-Bold.otf"),
+)
+
+
+def _font_face_css() -> str:
+    """Build @font-face rules pointing at the bundled OTF files via file:// URLs.
+
+    WeasyPrint loads @font-face `src` files directly through its URL fetcher,
+    so this works without the fonts being registered with fontconfig.
+    """
+    rules = []
+    for family, weight, filename in _FONT_FACES:
+        path = _FONTS_DIR / filename
+        if not path.is_file():
+            logger.warning("Bundled CJK font missing: %s", path)
+            continue
+        rules.append(
+            f'@font-face {{ font-family: "{family}"; font-weight: {weight}; '
+            f'font-style: normal; src: url("{path.as_uri()}") format("opentype"); }}'
+        )
+    return "\n        ".join(rules)
+
+
+_FONT_FACE_CSS = _font_face_css()
+
+
 # Brand accent — tuned to match the gold in iifle-logo.png.
 BRAND_GOLD = "#b8893e"
 BRAND_GOLD_DARK = "#8f6a2c"
@@ -184,6 +221,9 @@ def _render_html(
     <meta charset="UTF-8">
     <title>{_escape(report_title)} — {_escape(company_name)}</title>
     <style>
+        /* ───────────────── Bundled CJK fonts ───────────────── */
+        {_FONT_FACE_CSS}
+
         /* ───────────────── Page setup ───────────────── */
 
         /* Cover page: no running header/footer. */
@@ -211,7 +251,7 @@ def _render_html(
             }}
             @bottom-left {{
                 content: "{_escape(L('confidential').split(' — ')[0])}";
-                font-family: "Inter", "Noto Sans CJK SC", "Noto Sans SC", "PingFang SC", "Heiti SC", sans-serif;
+                font-family: "Inter", "Noto Sans SC", sans-serif;
                 font-size: 8px;
                 color: {INK_MUTED};
                 letter-spacing: 1.5px;
@@ -237,14 +277,11 @@ def _render_html(
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 
         html, body {{
-            /* CJK families are named explicitly so Chinese resolves on the
-             * deploy image (Noto Sans CJK SC, installed in the Dockerfile)
-             * and on macOS dev (PingFang/Hiragino/Heiti). Relying on the
-             * generic `sans-serif` fallback renders CJK blank on Linux. */
+            /* Latin fonts first (English uses Inter); CJK glyphs fall through
+             * to the bundled "Noto Sans SC" @font-face, which exists on every
+             * platform — so rendering is identical in dev and prod. */
             font-family: "Inter", "Helvetica Neue", -apple-system,
-                         "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC",
-                         "PingFang SC", "Hiragino Sans GB", "Heiti SC",
-                         "Microsoft YaHei", sans-serif;
+                         "Noto Sans SC", sans-serif;
             font-size: 10.5pt;
             line-height: 1.65;
             color: {INK};
@@ -372,8 +409,7 @@ def _render_html(
         }}
 
         .cover h1 {{
-            font-family: "Georgia", "Times New Roman", "Noto Serif CJK SC",
-                         "Noto Serif SC", "Songti SC", "STSong", serif;
+            font-family: "Georgia", "Times New Roman", "Noto Serif SC", serif;
             font-size: 36pt;
             line-height: 1.15;
             font-weight: 700;
@@ -385,8 +421,7 @@ def _render_html(
         }}
 
         .cover .branch {{
-            font-family: "Georgia", "Times New Roman", "Noto Serif CJK SC",
-                         "Noto Serif SC", "Songti SC", "STSong", serif;
+            font-family: "Georgia", "Times New Roman", "Noto Serif SC", serif;
             font-size: 18pt;
             font-style: italic;
             font-weight: 400;
@@ -428,8 +463,7 @@ def _render_html(
         }}
 
         .cover .company-name {{
-            font-family: "Georgia", "Times New Roman", "Noto Serif CJK SC",
-                         "Noto Serif SC", "Songti SC", "STSong", serif;
+            font-family: "Georgia", "Times New Roman", "Noto Serif SC", serif;
             font-size: 24pt;
             font-weight: 700;
             color: {INK};
