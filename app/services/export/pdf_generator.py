@@ -11,6 +11,7 @@ Produces a branded, professionally-styled PDF with:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import uuid
@@ -45,19 +46,31 @@ REPORT_TYPE_LABELS = {
 }
 
 
-# Resolve the repo-level logo (repo-root/iifle-logo.png) once and embed as
-# a data URL. WeasyPrint can render file:// paths too, but a data URL is
-# portable across dev/prod containers regardless of working directory.
-_LOGO_PATH = Path(__file__).resolve().parents[4] / "iifle-logo.png"
+# Resolve the IIFLE logo and embed it as a data URL. WeasyPrint can render
+# file:// paths too, but a data URL is portable across dev/prod regardless of
+# working directory. We check the bundled copy inside the package first
+# (app/assets/iifle-logo.png — present in the Docker image, whose build
+# context is ./backend) and fall back to the repo-root logo for local dev.
+_LOGO_CANDIDATES = (
+    Path(__file__).resolve().parents[2] / "assets" / "iifle-logo.png",
+    Path(__file__).resolve().parents[4] / "iifle-logo.png",
+)
 
 
 def _logo_data_url() -> str:
-    try:
-        data = _LOGO_PATH.read_bytes()
-        return "data:image/png;base64," + base64.b64encode(data).decode("ascii")
-    except Exception as exc:
-        logger.warning("Could not embed IIFLE logo (%s): %s", _LOGO_PATH, exc)
-        return ""
+    for path in _LOGO_CANDIDATES:
+        try:
+            data = path.read_bytes()
+            return "data:image/png;base64," + base64.b64encode(data).decode("ascii")
+        except FileNotFoundError:
+            continue
+        except Exception as exc:
+            logger.warning("Could not embed IIFLE logo (%s): %s", path, exc)
+    logger.warning(
+        "IIFLE logo not found in any of: %s",
+        ", ".join(str(p) for p in _LOGO_CANDIDATES),
+    )
+    return ""
 
 
 _LOGO_DATA_URL = _logo_data_url()
@@ -759,7 +772,13 @@ async def generate_pdf(
 
     html_content = _render_html(report, list(report.sections), company, language, branch_label)
 
-    pdf_bytes = weasyprint.HTML(string=html_content).write_pdf()
+    # WeasyPrint is synchronous and CPU-bound — loading and subsetting the CJK
+    # font can take several seconds. Run it in a worker thread so it doesn't
+    # block the asyncio event loop (which would freeze every other request and
+    # make the export look "stuck").
+    pdf_bytes = await asyncio.to_thread(
+        lambda: weasyprint.HTML(string=html_content).write_pdf()
+    )
 
     logger.info("PDF generated for report %s (%d bytes)", report_id, len(pdf_bytes))
     return pdf_bytes
