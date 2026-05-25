@@ -198,7 +198,7 @@ def _render_html(
             }}
             @bottom-left {{
                 content: "{_escape(L('confidential').split(' — ')[0])}";
-                font-family: "Inter", "Noto Sans SC", sans-serif;
+                font-family: "Inter", "Noto Sans CJK SC", "Noto Sans SC", "PingFang SC", "Heiti SC", sans-serif;
                 font-size: 8px;
                 color: {INK_MUTED};
                 letter-spacing: 1.5px;
@@ -224,8 +224,14 @@ def _render_html(
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 
         html, body {{
+            /* CJK families are named explicitly so Chinese resolves on the
+             * deploy image (Noto Sans CJK SC, installed in the Dockerfile)
+             * and on macOS dev (PingFang/Hiragino/Heiti). Relying on the
+             * generic `sans-serif` fallback renders CJK blank on Linux. */
             font-family: "Inter", "Helvetica Neue", -apple-system,
-                         "Noto Sans SC", "Source Han Sans SC", sans-serif;
+                         "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC",
+                         "PingFang SC", "Hiragino Sans GB", "Heiti SC",
+                         "Microsoft YaHei", sans-serif;
             font-size: 10.5pt;
             line-height: 1.65;
             color: {INK};
@@ -353,7 +359,8 @@ def _render_html(
         }}
 
         .cover h1 {{
-            font-family: "Georgia", "Times New Roman", "Noto Serif SC", serif;
+            font-family: "Georgia", "Times New Roman", "Noto Serif CJK SC",
+                         "Noto Serif SC", "Songti SC", "STSong", serif;
             font-size: 36pt;
             line-height: 1.15;
             font-weight: 700;
@@ -365,7 +372,8 @@ def _render_html(
         }}
 
         .cover .branch {{
-            font-family: "Georgia", "Times New Roman", "Noto Serif SC", serif;
+            font-family: "Georgia", "Times New Roman", "Noto Serif CJK SC",
+                         "Noto Serif SC", "Songti SC", "STSong", serif;
             font-size: 18pt;
             font-style: italic;
             font-weight: 400;
@@ -407,7 +415,8 @@ def _render_html(
         }}
 
         .cover .company-name {{
-            font-family: "Georgia", "Times New Roman", "Noto Serif SC", serif;
+            font-family: "Georgia", "Times New Roman", "Noto Serif CJK SC",
+                         "Noto Serif SC", "Songti SC", "STSong", serif;
             font-size: 24pt;
             font-weight: 700;
             color: {INK};
