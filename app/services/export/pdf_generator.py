@@ -79,15 +79,21 @@ _LOGO_DATA_URL = _logo_data_url()
 # Bundled Simplified-Chinese fonts (single language, single weight each — see
 # app/assets/fonts/). We load these via @font-face instead of the system
 # `fonts-noto-cjk` super-collection (110 MB+, packs SC/TC/JP/KR) because
-# subsetting that giant file on a small instance took minutes. These SC-only
-# OTFs are ~8–12 MB, so the render takes seconds and is identical in dev/prod.
+# subsetting that giant file on a small instance took minutes.
+#
+# These MUST be TrueType (`glyf` outlines), NOT the OpenType/CFF `.otf` builds.
+# The large Noto CJK `.otf` files use CID-keyed CFF outlines, which WeasyPrint's
+# subsetter corrupts: it keeps the `cmap` (so text still extracts/copies) but
+# drops the glyph outlines, so every CJK character renders as blank space. The
+# `glyf`-based `.ttf` builds subset correctly. These were instanced from the
+# Google Fonts variable TTFs at wght 400/700; ~10–15 MB each, render in seconds.
 _FONTS_DIR = Path(__file__).resolve().parents[2] / "assets" / "fonts"
 
 _FONT_FACES = (
-    ("Noto Sans SC", "normal", "NotoSansSC-Regular.otf"),
-    ("Noto Sans SC", "bold", "NotoSansSC-Bold.otf"),
-    ("Noto Serif SC", "normal", "NotoSerifSC-Regular.otf"),
-    ("Noto Serif SC", "bold", "NotoSerifSC-Bold.otf"),
+    ("Noto Sans SC", "normal", "NotoSansSC-Regular.ttf"),
+    ("Noto Sans SC", "bold", "NotoSansSC-Bold.ttf"),
+    ("Noto Serif SC", "normal", "NotoSerifSC-Regular.ttf"),
+    ("Noto Serif SC", "bold", "NotoSerifSC-Bold.ttf"),
 )
 
 
@@ -105,7 +111,7 @@ def _font_face_css() -> str:
             continue
         rules.append(
             f'@font-face {{ font-family: "{family}"; font-weight: {weight}; '
-            f'font-style: normal; src: url("{path.as_uri()}") format("opentype"); }}'
+            f'font-style: normal; src: url("{path.as_uri()}") format("truetype"); }}'
         )
     return "\n        ".join(rules)
 
